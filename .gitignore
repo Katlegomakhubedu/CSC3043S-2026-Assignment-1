@@ -1,0 +1,43 @@
+# --- Dataset (Section 2 / 10.1: never commit) ---
+data/
+*.txt.gz
+TinyStoriesV2*.txt
+
+# --- Encoded corpus arrays (Section 3.5 / 10.1: never commit) ---
+*.npy
+
+# --- Model checkpoints (Section 5.5 / 10.1: never commit) ---
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# NOTE: tokenizer vocab/merges files and logs/ (JSONL/CSV) are intentionally
+# NOT ignored — Section 10.1 requires them to be committed since they are small.
+
+# --- Tutorial notebooks (not part of submitted work: never commit) ---
+CSC3043S_Tutorial_Posttraining.ipynb
+CSC3043S_Tutorial_Transformer_LM_solutions.ipynb
