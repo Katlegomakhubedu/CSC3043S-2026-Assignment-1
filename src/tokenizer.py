@@ -2,6 +2,7 @@ import re
 import regex
 from collections import Counter
 from typing import Iterator
+import pickle
 
 def get_pretokens(documents: list[str]) -> list[tuple[bytes, ...]]:
     """Tokenize documents into a list of byte-tuples using the GPT-2 regex."""
@@ -117,11 +118,15 @@ class BPETokenizer:
         # We need the pre-tokenizer regex for encoding new strings
         self.pat = regex.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 
-    @classmethod    
+    
+
+    @classmethod
     def from_files(cls, vocab_path, merges_path, special_tokens=None):
-        # The assignment does not mandate a specific serialization format, 
-        # so this can be implemented using json or pickle depending on how you save.
-        raise NotImplementedError("Implement file loading based on your chosen save format.")
+        with open(vocab_path, 'rb') as f:
+            vocab = pickle.load(f)
+        with open(merges_path, 'rb') as f:
+            merges = pickle.load(f)
+        return cls(vocab, merges, special_tokens)
         
     def _apply_merges(self, word_bytes: tuple[bytes, ...]) -> tuple[bytes, ...]:
         """Greedily applies merges to a sequence of bytes based on learned merge ranks."""

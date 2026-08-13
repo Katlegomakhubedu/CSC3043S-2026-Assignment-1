@@ -38,14 +38,14 @@ class CausalSelfAttention(nn.Module):
         use_qk_norm: whether to RMSNorm the queries and keys before attention
     """
 
-    def __init__(self, d_model, n_heads, rope, use_qk_norm=True):
+    def __init__(self, d_model, n_heads, context_length, rope, use_rope=True, use_qk_norm=True):
         super().__init__()
-        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        assert d_model % n_heads == 0
         self.n_heads = n_heads
-        self.d_head = d_model // n_heads          # d_q = d_k = d_v = d_model / n_heads
+        self.d_head = d_model // n_heads
+        self.context_length = context_length
+        self.use_rope = use_rope
 
-        # One full-width projection each; the heads are carved out by reshaping.
-        # No bias terms, following modern LLMs.
         self.q_proj = nn.Linear(d_model, d_model, bias=False)
         self.k_proj = nn.Linear(d_model, d_model, bias=False)
         self.v_proj = nn.Linear(d_model, d_model, bias=False)
@@ -55,7 +55,11 @@ class CausalSelfAttention(nn.Module):
         self.q_norm = RMSNorm(self.d_head) if use_qk_norm else nn.Identity()
         self.k_norm = RMSNorm(self.d_head) if use_qk_norm else nn.Identity()
 
-    def forward(self, x):
+        self.register_buffer('k_cache', None)
+        self.register_buffer('v_cache', None)
+        self.cache_len = 0
+
+    def forward(self, x, use_cache=False):
         """
         params:
             x: (batch, seq_len, d_model)
@@ -63,22 +67,34 @@ class CausalSelfAttention(nn.Module):
             (batch, seq_len, d_model)
         """
         batch, seq_len, _ = x.shape
-        positions = torch.arange(seq_len, device=x.device)
+        positions = torch.arange(self.cache_len, self.cache_len + seq_len, device=x.device)
 
-        # Step 1: project, then split into heads -> (batch, n_heads, seq_len, d_head)
         q = self.q_proj(x).view(batch, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         k = self.k_proj(x).view(batch, seq_len, self.n_heads, self.d_head).transpose(1, 2)
         v = self.v_proj(x).view(batch, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
-        # Step 2: QK norm, then RoPE on queries and keys only (never on values)
         q, k = self.q_norm(q), self.k_norm(k)
-        q, k = self.rope(q, positions), self.rope(k, positions)
 
-        # Step 3: causal mask - query i attends to key j only if j <= i
-        mask = positions[None, :] <= positions[:, None]              # (seq_len, seq_len)
+        if self.use_rope:
+            q, k = self.rope(q, positions), self.rope(k, positions)
 
-        out = scaled_dot_product_attention(q, k, v, mask)            # (b, n_heads, seq_len, d_head)
+        if use_cache:
+            # Allocate cache on first call
+            if self.k_cache is None:
+                self.k_cache = torch.zeros(1, self.n_heads, self.context_length, self.d_head, device=x.device)
+                self.v_cache = torch.zeros_like(self.k_cache)
+            # Store current K, V
+            self.k_cache[:, :, self.cache_len:self.cache_len + seq_len] = k
+            self.v_cache[:, :, self.cache_len:self.cache_len + seq_len] = v
+            k_full = self.k_cache[:, :, :self.cache_len + seq_len]
+            v_full = self.v_cache[:, :, :self.cache_len + seq_len]
+            self.cache_len += seq_len
+        else:
+            k_full, v_full = k, v
+            self.cache_len = 0  # reset if not caching
 
-        # Step 4: concatenate the heads and project back to the residual stream
+        is_causal = (not use_cache) and seq_len > 1
+        out = F.scaled_dot_product_attention(q, k_full, v_full, is_causal=is_causal)
+
         out = out.transpose(1, 2).contiguous().view(batch, seq_len, -1)
         return self.o_proj(out)

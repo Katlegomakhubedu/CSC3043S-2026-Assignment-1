@@ -31,3 +31,13 @@ def compute_d_ff(d_model, multiple_of=64):
     """Round (8/3) * d_model up to the nearest multiple of `multiple_of`."""
     d_ff = int(8 * d_model / 3)
     return multiple_of * ((d_ff + multiple_of - 1) // multiple_of)
+
+class ReLUFFN(nn.Module):
+    """Parameter-matched ReLU feed-forward for ablation."""
+    def __init__(self, d_model, d_ff):
+        super().__init__()
+        self.w1 = nn.Linear(d_model, d_ff, bias=False)
+        self.w2 = nn.Linear(d_ff, d_model, bias=False)
+
+    def forward(self, x):
+        return self.w2(F.relu(self.w1(x)))
