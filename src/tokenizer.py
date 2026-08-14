@@ -1,6 +1,6 @@
 import re
 import regex
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Iterator
 import pickle
 
@@ -62,43 +62,137 @@ def split_text(raw_text: str, special_tokens: list[str]) -> list[str]:
 
     return documents
     
-def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    """Returns (vocab: id -> token bytes, merges: ordered list of (left, right) byte pairs)."""
-    raw_text = read_txt(input_path)
-    documents = split_text(raw_text, special_tokens)
-
-    # 2. Get initial frequencies
-    pretokens = get_pretokens(documents)
-    word_freq = count_pretokens(pretokens)
-
-    # 3. Initialize Byte-Level Vocabulary (Special Tokens + 256 byte values)
+def init_vocab(special_tokens: list[str]) -> dict[int, bytes]:
+    """Byte-level vocabulary: special tokens first, then all 256 byte values."""
     vocab = {}
     for i, st in enumerate(special_tokens):
         vocab[i] = st.encode("utf-8")
-        
     offset = len(special_tokens)
     for b in range(256):
         vocab[offset + b] = bytes([b])
+    return vocab
 
-    # 4. Iteratively learn merges
+
+def _build_pair_index(words: list[tuple[bytes, ...]], freqs: list[int]):
+    """
+    Build the incremental-merge bookkeeping used by `train_bpe_incremental`:
+        pair_counts:   pair -> total (freq-weighted) occurrence count across the corpus
+        pair_to_words: pair -> set of indices into `words` where the pair currently occurs
+    """
+    pair_counts = Counter()
+    pair_to_words = defaultdict(set)
+    for idx, word in enumerate(words):
+        freq = freqs[idx]
+        for i in range(len(word) - 1):
+            pair = (word[i], word[i + 1])
+            pair_counts[pair] += freq
+            pair_to_words[pair].add(idx)
+    return pair_counts, pair_to_words
+
+
+def train_bpe_incremental(word_freq: dict[tuple[bytes, ...], int], vocab: dict[int, bytes],
+                           num_merges: int, track_token_counts: bool = False):
+    """
+    Learn up to `num_merges` BPE merges, updating pair counts incrementally rather
+    than recounting the whole corpus after every merge (required by §3.2).
+
+    After each merge, only the pre-tokens that actually contained the merged pair
+    (tracked via `pair_to_words`) have their pair-count contributions removed and
+    re-added - every other pre-token is untouched. This is what makes training
+    scale to the full corpus instead of being O(merges * corpus_size).
+
+    Mutates `vocab` in place (adds one entry per merge) and returns
+    (merges, token_counts). `token_counts` is None unless track_token_counts=True,
+    in which case it's a list of the corpus's total token count after each merge
+    (starting with the pre-merge count at index 0) - free to compute because every
+    merge reduces the token count by exactly the merged pair's occurrence count.
+    """
+    words = list(word_freq.keys())
+    freqs = list(word_freq.values())
+    pair_counts, pair_to_words = _build_pair_index(words, freqs)
+
     merges = []
-    num_merges = vocab_size - len(vocab)
-    
+    token_counts = None
+    if track_token_counts:
+        total_tokens = sum(freqs[i] * len(words[i]) for i in range(len(words)))
+        token_counts = [total_tokens]
+
     for _ in range(num_merges):
-        pair_counts = count_pairs(word_freq)
         if not pair_counts:
             break
-            
-        # Tie-breaking: take the lexicographically greatest pair if counts are tied
-        best_count = max(pair_counts.values())
-        best_pair = max(pair for pair, count in pair_counts.items() if count == best_count)
 
-        # Apply merge across all unique words
-        word_freq = {merge_pair(word, best_pair): freq for word, freq in word_freq.items()}
-        
-        # Record the merge
+        # Tie-breaking: take the lexicographically greatest pair if counts are tied.
+        best_count = max(pair_counts.values())
+        best_pair = max(p for p, c in pair_counts.items() if c == best_count)
+
+        # Only revisit pre-tokens that actually contain best_pair.
+        affected = list(pair_to_words.get(best_pair, ()))
+        for idx in affected:
+            word = words[idx]
+            freq = freqs[idx]
+
+            # Remove this word's old pair contributions.
+            for i in range(len(word) - 1):
+                p = (word[i], word[i + 1])
+                pair_counts[p] -= freq
+                if pair_counts[p] <= 0:
+                    del pair_counts[p]
+                bucket = pair_to_words.get(p)
+                if bucket is not None:
+                    bucket.discard(idx)
+                    if not bucket:
+                        del pair_to_words[p]
+
+            new_word = merge_pair(word, best_pair)
+            words[idx] = new_word
+
+            # Add the merged word's new pair contributions.
+            for i in range(len(new_word) - 1):
+                p = (new_word[i], new_word[i + 1])
+                pair_counts[p] = pair_counts.get(p, 0) + freq
+                pair_to_words[p].add(idx)
+
         merges.append(best_pair)
         vocab[len(vocab)] = best_pair[0] + best_pair[1]
+
+        if track_token_counts:
+            total_tokens -= best_count
+            token_counts.append(total_tokens)
+
+    return merges, token_counts
+
+
+def get_word_freq_from_files(input_paths: list[str], special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+    """
+    Pre-tokenize one or more files and return their combined pre-token frequency
+    table. Files are processed (and special-token-split) one at a time and their
+    counts merged, rather than concatenating the raw text first, so this doesn't
+    need to hold more than one file's text in memory at once - e.g. TinyStories'
+    train split ships as two ~1.1GB part files that together form one corpus.
+    (A pre-token straddling exactly the boundary between two files would be
+    mis-split into two pre-tokens; with millions of documents in the corpus and
+    at most `len(input_paths) - 1` such boundaries, the effect on merge
+    statistics is negligible.)
+    """
+    word_freq = Counter()
+    for path in input_paths:
+        raw_text = read_txt(path)
+        documents = split_text(raw_text, special_tokens)
+        pretokens = get_pretokens(documents)
+        for pretoken, count in count_pretokens(pretokens).items():
+            word_freq[pretoken] += count
+    return dict(word_freq)
+
+
+def train_bpe(input_path: str | list[str], vocab_size: int, special_tokens: list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    """Returns (vocab: id -> token bytes, merges: ordered list of (left, right) byte pairs).
+    `input_path` may be a single path or a list of paths making up one corpus."""
+    input_paths = [input_path] if isinstance(input_path, str) else list(input_path)
+    word_freq = get_word_freq_from_files(input_paths, special_tokens)
+
+    vocab = init_vocab(special_tokens)
+    num_merges = vocab_size - len(vocab)
+    merges, _ = train_bpe_incremental(word_freq, vocab, num_merges)
 
     return vocab, merges
     
@@ -194,26 +288,26 @@ class BPETokenizer:
 
 
 if __name__ == "__main__":
-    input_path = r"C:\Users\katle\OneDrive - University of Cape Town\Final Year\CS3043S\samples.txt"
-    vocab_size = 10000
-    special_tokens = ["<|endoftext|>"]
-    raw_text = read_txt(input_path)
-    documents = split_text(raw_text, special_tokens)
-    pretokens = get_pretokens(documents)
-    freq = count_pretokens(pretokens)
+    # Smoke test: train a small tokenizer on samples.txt and round-trip the
+    # validation file through it. Paths are relative to the repo root (the
+    # parent of this file's directory) so this runs on any checkout.
+    import argparse
+    import os
 
-    vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    parser = argparse.ArgumentParser(description="Quick BPE tokenizer smoke test.")
+    parser.add_argument("--input", default=os.path.join(repo_root, "samples.txt"))
+    parser.add_argument("--valid", default=os.path.join(repo_root, "data", "TinyStoriesV2-GPT4-valid.txt"))
+    parser.add_argument("--vocab_size", type=int, default=8000)
+    args = parser.parse_args()
+
+    special_tokens = ["<|endoftext|>"]
+    vocab, merges = train_bpe(args.input, args.vocab_size, special_tokens)
+    print(f"Trained {len(merges)} merges, vocab size {len(vocab)}")
 
     tokenizer = BPETokenizer(vocab, merges, special_tokens)
-    val_path = r"C:\Users\katle\OneDrive - University of Cape Town\Final Year\CS3043S\data\TinyStoriesV2-GPT4-valid.txt"
-    val_files = read_txt(val_path)
-    
-    encoded = tokenizer.encode(val_files)
+    val_text = read_txt(args.valid)
+    encoded = tokenizer.encode(val_text)
     decoded = tokenizer.decode(encoded)
-    
-
-    print(f"Encoded IDs: {encoded}")
-    print(f"Decoded: {decoded}")
-
-
-    
+    print(f"Encoded {len(val_text)} chars into {len(encoded)} tokens; round-trip match: {decoded == val_text}")

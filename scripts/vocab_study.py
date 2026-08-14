@@ -1,78 +1,39 @@
+import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import matplotlib
+matplotlib.use("Agg")  # headless: this script only needs to save a PNG, and
+                        # plt.show() with no display (Colab CPU runtime, CI, ...)
+                        # blocks forever instead of erroring.
 import matplotlib.pyplot as plt
 import os
-from collections import Counter
-from src.tokenizer import read_txt, split_text, get_pretokens, count_pretokens, merge_pair
+from src.tokenizer import read_txt, get_word_freq_from_files, init_vocab, train_bpe_incremental
 
 def train_bpe_with_counts(input_path, max_vocab_size, special_tokens):
     """
-    Trains BPE up to `max_vocab_size`.
+    Trains BPE up to `max_vocab_size`, using the same incremental merge-counting
+    trainer as `train_bpe` (src/tokenizer.py) so this vocab-size study reflects
+    the actual training algorithm, not a separate (slower) reimplementation.
+    `input_path` may be a single path or a list of paths.
     Returns: (vocab, merges, token_counts, initial_vocab_size)
     """
-    # --- Setup ---
-    raw_text = read_txt(input_path)
-    documents = split_text(raw_text, special_tokens)
-    
-    # Pre-tokenize and get initial frequencies
-    pretokens = get_pretokens(documents)
-    word_freq = count_pretokens(pretokens)
+    input_paths = [input_path] if isinstance(input_path, str) else list(input_path)
+    word_freq = get_word_freq_from_files(input_paths, special_tokens)
 
-    # Initialize vocabulary: Special tokens + 256 byte values
-    vocab = {}
-    for i, st in enumerate(special_tokens):
-        vocab[i] = st.encode("utf-8")
-    
-    offset = len(special_tokens)
-    for b in range(256):
-        vocab[offset + b] = bytes([b])
-    
+    vocab = init_vocab(special_tokens)
     initial_vocab_size = len(vocab)
-    
-    # Count total tokens in the corpus initially
-    total_tokens = sum(freq * len(word) for word, freq in word_freq.items())
-    token_counts = [total_tokens]  # record count at initial size
-    
-    merges = []
     num_merges = max_vocab_size - initial_vocab_size
 
-    # --- Iterative merge loop ---
-    for _ in range(num_merges):
-        # Count adjacent pairs across all words
-        pair_counts = Counter()
-        for word, freq in word_freq.items():
-            for i in range(len(word) - 1):
-                pair = (word[i], word[i+1])
-                pair_counts[pair] += freq
-
-        if not pair_counts:
-            break
-
-        # Tie-breaking: lexicographically greatest pair among max-count pairs
-        best_count = max(pair_counts.values())
-        best_pair = max(p for p, c in pair_counts.items() if c == best_count)
-
-        # Apply the merge to all words
-        new_word_freq = {}
-        for word, freq in word_freq.items():
-            merged = merge_pair(word, best_pair)
-            new_word_freq[merged] = new_word_freq.get(merged, 0) + freq
-        word_freq = new_word_freq
-
-        # Update token count
-        total_tokens -= best_count
-        token_counts.append(total_tokens)
-
-        # Record the merge
-        merges.append(best_pair)
-        vocab[len(vocab)] = best_pair[0] + best_pair[1]
+    merges, token_counts = train_bpe_incremental(word_freq, vocab, num_merges, track_token_counts=True)
 
     return vocab, merges, token_counts, initial_vocab_size
 
 def compute_compression_metrics(input_path, token_counts, initial_vocab_size, target_sizes):
     """
     Computes bytes/token and characters/token for target vocabulary sizes.
+    `input_path` may be a single path or a list of paths (same corpus used to train).
     """
-    byte_count = os.path.getsize(input_path)
-    char_count = len(read_txt(input_path))
+    input_paths = [input_path] if isinstance(input_path, str) else list(input_path)
+    byte_count = sum(os.path.getsize(p) for p in input_paths)
+    char_count = sum(len(read_txt(p)) for p in input_paths)
 
     # Build a map: vocab_size -> total_token_count
     size_to_tokens = {initial_vocab_size + i: count for i, count in enumerate(token_counts)}
@@ -127,10 +88,16 @@ def plot_compression(metrics, output_file="compression_ratio.png"):
     plt.show()
 
 def main():
-    # Configuration
-    INPUT_PATH = r"C:\Users\katle\OneDrive - University of Cape Town\Final Year\CS3043S\data\TinyStoriesV2-GPT4-valid.txt"
+    import argparse
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parser = argparse.ArgumentParser(description="Compression-ratio vs vocab-size study (§3.4).")
+    parser.add_argument("--input", default=os.path.join(repo_root, "data", "TinyStoriesV2-GPT4-valid.txt"))
+    parser.add_argument("--target_sizes", type=int, nargs="+", default=[1000, 2000, 4000, 8000, 16000])
+    args = parser.parse_args()
+
+    INPUT_PATH = args.input
     SPECIAL_TOKENS = ["<|endoftext|>"]
-    TARGET_SIZES = [1000, 2000, 4000, 8000, 16000]
+    TARGET_SIZES = args.target_sizes
     MAX_SIZE = max(TARGET_SIZES)
 
     #Train BPE once
@@ -147,3 +114,6 @@ def main():
     print("-" * 48)
     for m in metrics:
         print(f"{m['size']:<16} | {m['bytes_per_token']:<12.3f} | {m['chars_per_token']:<12.3f}")
+
+if __name__ == "__main__":
+    main()

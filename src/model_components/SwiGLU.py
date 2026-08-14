@@ -28,12 +28,32 @@ class SwiGLU(nn.Module):
 
 
 def compute_d_ff(d_model, multiple_of=64):
-    """Round (8/3) * d_model up to the nearest multiple of `multiple_of`."""
-    d_ff = int(8 * d_model / 3)
-    return multiple_of * ((d_ff + multiple_of - 1) // multiple_of)
+    """Round (8/3) * d_model to the NEAREST multiple of `multiple_of`.
+
+    (Not ceiling: rounding up gives 1408 for d_model=512, but the
+    assignment's reference value is 1344 = round(1365.33 / 64) * 64,
+    i.e. nearest, not up.)
+    """
+    d_ff = 8 * d_model / 3
+    return multiple_of * round(d_ff / multiple_of)
+
+
+def relu_ffn_hidden_dim(d_ff_swiglu):
+    """
+    Hidden dim for a 2-matrix ReLU FFN that matches a 3-matrix SwiGLU FFN's
+    parameter count at the same d_model.
+
+    SwiGLU has 3 (d_model x d_ff) matrices -> 3 * d_model * d_ff params.
+    A plain ReLU FFN has 2 -> 2 * d_model * d_ff_relu params.
+    Equal params requires d_ff_relu = 1.5 * d_ff_swiglu exactly.
+    """
+    return round(1.5 * d_ff_swiglu)
+
 
 class ReLUFFN(nn.Module):
-    """Parameter-matched ReLU feed-forward for ablation."""
+    """Plain (non-gated) ReLU feed-forward. Use `relu_ffn_hidden_dim` to size
+    `d_ff` so this has the same parameter count as a SwiGLU FFN, for the
+    §7.2 ablation."""
     def __init__(self, d_model, d_ff):
         super().__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)
