@@ -10,10 +10,10 @@ import numpy as np
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 
-from training_helpers.get_batch import get_batch
-from training_helpers.estimate_loss import estimate_loss
-from training_helpers.manage_checkpoint import save_checkpoint, load_checkpoint
-from seed import set_seed
+from .training_helpers.get_batch import get_batch
+from .training_helpers.estimate_loss import estimate_loss
+from .training_helpers.manage_checkpoint import save_checkpoint, load_checkpoint
+from .seed import set_seed
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 set_seed(42)

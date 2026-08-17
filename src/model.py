@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import math
 from dataclasses import dataclass
-from model_components.TransformerBlock import TransformerBlock
-from model_components.RMSNorm import RMSNorm
-from model_components.RoPE import RotaryPositionalEmbedding
+from .model_components.TransformerBlock import TransformerBlock
+from .model_components.RMSNorm import RMSNorm
+from .model_components.RoPE import RotaryPositionalEmbedding
 
 @dataclass
 class TransformerConfig:

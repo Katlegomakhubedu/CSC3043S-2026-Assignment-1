@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from seed import set_seed
+from .seed import set_seed
 
 set_seed(42)
 
@@ -9,11 +9,8 @@ END_OF_TEXT = "<|endoftext|>"
 @torch.no_grad()
 def generate(model, tokenizer, prompt: str, max_new_tokens: int = 256, temperature: float = 1.0, top_k: int | None = None,
             top_p: float | None = None, seed: int | None = None, use_cache: bool = True) -> str:
-    """
-    Autoregressively generate a continuation of `prompt`.
+    """Autoregressively generate a continuation of `prompt`.
 
-    Order of sampling transforms (when temperature > 0): temperature scaling,
-    then top-k truncation, then top-p (nucleus) truncation, then sampling.
     temperature == 0 means greedy decoding.
 
     If use_cache, generation stops once the KV cache reaches model.config.context_length

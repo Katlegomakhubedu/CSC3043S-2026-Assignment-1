@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-from training_helpers.get_batch import get_batch
+from .get_batch import get_batch
 
 @torch.no_grad()
 def estimate_loss(model, token_ids, batch_size, context_length, device, n_batches=10, seed=1234):

@@ -1,6 +1,3 @@
-torch
-numpy
+
+pandas
 matplotlib
-regex
-tqdm
-pytest
