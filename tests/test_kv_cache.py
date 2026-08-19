@@ -15,9 +15,9 @@ Also covers the specific bugs this cache implementation had:
 import torch
 import pytest
 
-from model import TransformerLM, TransformerConfig
-from tokenizer import BPETokenizer
-from generate import generate
+from src.model import TransformerLM, TransformerConfig
+from src.tokenizer import BPETokenizer
+from src.generate import generate
 
 
 # A byte-level vocab (<|endoftext|> + 256 byte values) has exactly 257 IDs;

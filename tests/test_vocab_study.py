@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from conftest import REPO_ROOT, SAMPLES_FILE
-from tokenizer import (read_txt, split_text, iter_documents, init_vocab,
+from src.tokenizer import (read_txt, split_text, iter_documents, init_vocab,
                        get_word_freq_from_files, train_bpe_incremental, _PAT)
 
 sys.path.insert(0, REPO_ROOT)

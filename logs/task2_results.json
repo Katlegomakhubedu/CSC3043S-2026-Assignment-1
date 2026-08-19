@@ -1,0 +1,203 @@
+{
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel",
+    "cpu_count": 12,
+    "python": "3.13.6",
+    "torch": "2.8.0+cpu"
+  },
+  "config": {
+    "questions": [
+      7
+    ],
+    "prompt": "Once upon a time",
+    "q6_tokens": 100,
+    "token_counts": [
+      16,
+      32,
+      64,
+      128,
+      256
+    ],
+    "repeats": 3,
+    "device": null,
+    "out_dir": "C:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy"
+  },
+  "device": "cpu",
+  "tokenizer_source": "task1 (vocab.pkl/merges.pkl)",
+  "vocab_size": 4000,
+  "model_config": {
+    "vocab_size": 4000,
+    "context_length": 256,
+    "n_layers": 4,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ff": 1344,
+    "rope_theta": 10000.0,
+    "use_qk_norm": true
+  },
+  "trained_weights": false,
+  "q5": {
+    "swiglu": {
+      "d_ff": 1344,
+      "embedding": 2048000,
+      "lm_head": 2048000,
+      "non_embedding": 12456960,
+      "total": 16552960
+    },
+    "relu": {
+      "d_ff": 2048,
+      "embedding": 2048000,
+      "lm_head": 2048000,
+      "non_embedding": 12588032,
+      "total": 16684032
+    },
+    "difference_total": 131072,
+    "relative_difference": 0.007918342097123415,
+    "within_2_percent": true,
+    "vocab_size": 4000
+  },
+  "q6": {
+    "prompt": "Once upon a time",
+    "n_tokens_requested": 100,
+    "steps_compared": 100,
+    "generations_identical": true,
+    "argmax_identical_every_step": true,
+    "max_abs_logit_difference": 1.4901161193847656e-06,
+    "mean_abs_logit_difference": 1.0488182306289674e-06,
+    "tolerance": 0.0001,
+    "passed": true
+  },
+  "q7": {
+    "prompt": "Once upon a time",
+    "n_prompt_tokens": 4,
+    "context_length": 256,
+    "device": "cpu",
+    "repeats": 3,
+    "rows": [
+      {
+        "max_new_tokens": 16,
+        "cached": {
+          "tokens_generated": 16,
+          "seconds_mean": 0.22377496670621136,
+          "seconds_trials": [
+            0.284399600001052,
+            0.196835600072518,
+            0.1900897000450641
+          ],
+          "tokens_per_second": 71.500401655767
+        },
+        "uncached": {
+          "tokens_generated": 16,
+          "seconds_mean": 0.2625599333550781,
+          "seconds_trials": [
+            0.3040581999812275,
+            0.25351700000464916,
+            0.23010460007935762
+          ],
+          "tokens_per_second": 60.938467631167796
+        },
+        "speedup": 1.1733212933499688
+      },
+      {
+        "max_new_tokens": 32,
+        "cached": {
+          "tokens_generated": 32,
+          "seconds_mean": 0.4114353999029845,
+          "seconds_trials": [
+            0.39974549994803965,
+            0.4783882999327034,
+            0.3561723998282105
+          ],
+          "tokens_per_second": 77.77648692248047
+        },
+        "uncached": {
+          "tokens_generated": 32,
+          "seconds_mean": 0.6015970666582385,
+          "seconds_trials": [
+            0.5658444999717176,
+            0.640960399992764,
+            0.5979863000102341
+          ],
+          "tokens_per_second": 53.19174871937813
+        },
+        "speedup": 1.4621908246108468
+      },
+      {
+        "max_new_tokens": 64,
+        "cached": {
+          "tokens_generated": 64,
+          "seconds_mean": 0.6994447000324726,
+          "seconds_trials": [
+            0.601087500108406,
+            0.695729399798438,
+            0.8015172001905739
+          ],
+          "tokens_per_second": 91.50115798579748
+        },
+        "uncached": {
+          "tokens_generated": 64,
+          "seconds_mean": 1.3124386333705236,
+          "seconds_trials": [
+            1.2196462999563664,
+            1.3059645001776516,
+            1.411705099977553
+          ],
+          "tokens_per_second": 48.76418475707254
+        },
+        "speedup": 1.8764008552921938
+      },
+      {
+        "max_new_tokens": 128,
+        "cached": {
+          "tokens_generated": 128,
+          "seconds_mean": 1.7276555666855227,
+          "seconds_trials": [
+            1.5931827002204955,
+            2.004800899885595,
+            1.5849830999504775
+          ],
+          "tokens_per_second": 74.08884182022797
+        },
+        "uncached": {
+          "tokens_generated": 128,
+          "seconds_mean": 5.181610466757168,
+          "seconds_trials": [
+            5.822273400146514,
+            5.1352143001277,
+            4.587343699997291
+          ],
+          "tokens_per_second": 24.702744604440877
+        },
+        "speedup": 2.9992149862938238
+      },
+      {
+        "max_new_tokens": 256,
+        "cached": {
+          "tokens_generated": 253,
+          "seconds_mean": 3.47226096666418,
+          "seconds_trials": [
+            4.172272600000724,
+            3.1354562998749316,
+            3.1090540001168847
+          ],
+          "tokens_per_second": 72.86318696346676
+        },
+        "uncached": {
+          "tokens_generated": 256,
+          "seconds_mean": 12.021399333296964,
+          "seconds_trials": [
+            12.619276199955493,
+            12.022330899955705,
+            11.422590899979696
+          ],
+          "tokens_per_second": 21.295357795072096
+        },
+        "speedup": 3.4215526061894974
+      }
+    ],
+    "speedup_at_max": 3.4215526061894974,
+    "max_new_tokens_at_max": 256,
+    "figure": "task2_q7_throughput.png"
+  }
+}

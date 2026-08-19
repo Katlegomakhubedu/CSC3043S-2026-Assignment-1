@@ -41,7 +41,7 @@ def compute_d_ff(d_model, multiple_of=64):
 def relu_ffn_hidden_dim(d_ff_swiglu):
     """
     Hidden dim for a 2-matrix ReLU FFN that matches a 3-matrix SwiGLU FFN's
-    parameter count at the same d_model.
+    parameter count EXACTLY, at the same d_model.
 
     SwiGLU has 3 (d_model x d_ff) matrices -> 3 * d_model * d_ff params.
     A plain ReLU FFN has 2 -> 2 * d_model * d_ff_relu params.
@@ -51,9 +51,8 @@ def relu_ffn_hidden_dim(d_ff_swiglu):
 
 
 class ReLUFFN(nn.Module):
-    """Plain (non-gated) ReLU feed-forward. Use `relu_ffn_hidden_dim` to size
-    `d_ff` so this has the same parameter count as a SwiGLU FFN, for the
-    §7.2 ablation."""
+    """Plain (non-gated) ReLU feed-forward, FFN(x) = W2 ReLU(W1 x).
+    """
     def __init__(self, d_model, d_ff):
         super().__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)

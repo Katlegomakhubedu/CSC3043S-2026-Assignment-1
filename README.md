@@ -47,9 +47,10 @@ performance work depends on — that the streaming/parallel pre-tokenizer produc
 byte-identical merges to the naive whole-file path, and that a tokenizer derived
 by truncating a longer merge list is identical to one trained directly.
 
-> **Known issue:** `tests/test_kv_cache.py` and `tests/test_model.py` currently
-> fail to import — `src/model.py` uses a package-relative import but the tests
-> load `model` as a top-level module. Not yet fixed.
+Task 2 adds the model, KV-cache and throughput tests. `src/` is a package and
+its modules import each other relatively, so everything imports it as
+`src.model`, `src.tokenizer`, … with the repo root on `sys.path` — tests and
+scripts now share that one convention.
 
 ## Task 1 — tokenizer (§3, Q1–Q4)
 
@@ -115,7 +116,43 @@ To re-run only the vocabulary-size study:
 python scripts/vocab_study.py --input data/TinyStoriesV2-GPT4-valid.txt --workers 8
 ```
 
-## Tasks 2–5
+## Task 2 — model and inference (§4, Q5–Q7)
+
+```bash
+python scripts/run_task2_questions.py                    # all of Q5–Q7
+python scripts/run_task2_questions.py --questions 7 --repeats 5
+```
+
+**No trained weights and no GPU time are required.** Parameter counts are a
+property of the architecture, KV-cache correctness is an identity that must hold
+for any weights, and throughput is set by the shape of the computation rather
+than its values — so this runs on a freshly initialised model (seeded, so the
+numbers reproduce). Running a subset with `--questions` merges into the existing
+results rather than overwriting the other answers.
+
+Outputs:
+
+| Output | Answers |
+|---|---|
+| `logs/task2_results.json` | every number quoted for Q5–Q7 |
+| `task2_q7_throughput.png` | **the Q7 figure** |
+
+Two things worth knowing about the numbers:
+
+*§4.1's "roughly 17M parameters excluding the embedding and LM head" does not
+match this model.* The measured non-embedding count is 12.46M; 16.55M is the
+total *including* the embedding and LM head at `vocab_size=4000`. Q5 reports the
+measured split.
+
+*`generate(max_new_tokens=N)` does not always produce N tokens.* The cached path
+decodes into a fixed-size `context_length` buffer and stops on reaching it (§4.2
+permits this); the uncached path slides a window and has no such limit. At
+`max_new_tokens=256` with a 4-token prompt the cached path produces 253 tokens
+and the uncached 256, so dividing both by 256 would compare different amounts of
+work. Q7 divides by the true count from `tokens_actually_generated`, which
+`tests/test_task2_questions.py` checks against real generation.
+
+## Tasks 3–5
 
 Not yet reproducible from a single command — see `EXPERIMENTS.md` for the run
 log. Entry points as they stand:
@@ -125,10 +162,14 @@ log. Entry points as they stand:
 | `src/train.py` | training loop, optimiser/schedule, checkpointing, logging (CLI) |
 | `src/evaluate.py` | perplexity, BPC, position-wise loss |
 | `src/generate.py` | sampling + KV-cache generation |
-| `scripts/run_task2_questions.py` | Q5–Q7 |
 | `scripts/run_task3_questions.py` | Q8–Q9 |
 | `scripts/run_task4_questions.py` | Q10–Q17 |
 | `scripts/run_task5_questions.py` | Q18–Q20 |
+
+> **Known gap:** `src/train.py` hardcodes `use_rmsnorm`, `use_rope` and
+> `ffn_type` when it builds the config, so the §7.2 ablations are not yet
+> reachable from the command line even though `TransformerConfig` supports all
+> three. Needs three CLI flags before the Task 7 runs.
 
 ## Repository layout
 
@@ -142,6 +183,7 @@ src/
   generate.py           sampling + KV-cache generation
 scripts/
   run_task1.py          Task 1 end to end (Q1-Q4)
+  run_task2_questions.py  Task 2 end to end (Q5-Q7)
   encode_corpus.py      corpus -> uint16 .npy + metadata sidecar
   vocab_study.py        compression ratio vs vocabulary size
   make_plots.py         figures from run logs

@@ -204,7 +204,7 @@ if __name__ == "__main__":
         'use_amp': args.use_amp,
     }
 
-    from model import TransformerLM, TransformerConfig
+    from .model import TransformerLM, TransformerConfig
     config = TransformerConfig(
         vocab_size=args.vocab_size, context_length=args.context_length,
         n_layers=args.n_layers, d_model=args.d_model, n_heads=args.n_heads,

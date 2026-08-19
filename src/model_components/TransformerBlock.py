@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from .CausalSelfAttention import CausalSelfAttention
 from .RMSNorm import RMSNorm
-from .SwiGLU import SwiGLU, ReLUFFN, relu_ffn_hidden_dim
+from .SwiGLU import SwiGLU, ReLUFFN
 
 class TransformerBlock(nn.Module):
     """
@@ -27,7 +27,7 @@ class TransformerBlock(nn.Module):
         else:
             # Match SwiGLU's total parameter count at the same d_ff, rather than
             # reusing d_ff as-is (which would give ReLU only 2/3 as many params).
-            self.ffn = ReLUFFN(d_model, relu_ffn_hidden_dim(d_ff))
+            self.ffn = ReLUFFN(d_model, d_ff)
 
     def forward(self, x, use_cache=False):
         """

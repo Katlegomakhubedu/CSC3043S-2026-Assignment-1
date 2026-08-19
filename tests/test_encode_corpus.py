@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from conftest import REPO_ROOT, SAMPLES_FILE
-from tokenizer import BPETokenizer, train_bpe
+from src.tokenizer import BPETokenizer, train_bpe
 
 sys.path.insert(0, REPO_ROOT)
 from scripts.encode_corpus import encode_corpus, END_OF_TEXT  # noqa: E402

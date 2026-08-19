@@ -13,7 +13,7 @@ import random
 import pytest
 
 from conftest import SAMPLES_FILE, VALID_FILE
-from tokenizer import (
+from src.tokenizer import (
     BPETokenizer, train_bpe, train_bpe_incremental, init_vocab,
     read_txt, split_text, get_pretokens, count_pretokens, merge_pair,
     iter_documents, iter_document_pieces, count_pretokens_from_documents,

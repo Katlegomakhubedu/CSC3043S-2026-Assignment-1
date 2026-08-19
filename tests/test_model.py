@@ -10,7 +10,7 @@ Model sanity checks:
 import torch
 import pytest
 
-from model import TransformerLM, TransformerConfig
+from src.model import TransformerLM, TransformerConfig
 
 
 def make_config(**overrides):
@@ -71,21 +71,39 @@ def test_parameter_count_breakdown():
 
 
 def test_swiglu_and_relu_ffn_variants_match_in_total_parameters():
-    # §4.4 Q5: "confirm that your SwiGLU and ReLU FFN variants match in total
-    # parameters." They only match if the ReLU hidden dim is scaled up to
-    # compensate for having 2 weight matrices instead of SwiGLU's 3 - passing
-    # the same d_ff to both (the original bug) undercounts ReLU by 1/3.
-    swiglu_model = TransformerLM(make_config(ffn_type="swiglu"))
-    relu_model = TransformerLM(make_config(ffn_type="relu"))
+    """§4.4 Q5 / §7.2: the parameter-matched ReLU ablation.
 
-    swiglu_ffn_params = sum(p.numel() for n, p in swiglu_model.named_parameters() if ".ffn." in n)
-    relu_ffn_params = sum(p.numel() for n, p in relu_model.named_parameters() if ".ffn." in n)
-    assert swiglu_ffn_params == relu_ffn_params
+    §7.2 pairs SwiGLU at d_ff=1344 with ReLU at d_ff = 4 * d_model = 2048, and
+    states the parameter counts then "match to within 2%" - three matrices at
+    1344 versus two at 2048. So this asserts a 2% band, not equality, and it
+    uses the real §4.1 dimensions: the tolerance is a claim about those specific
+    numbers and means nothing at the toy sizes make_config uses.
+    """
+    base = dict(vocab_size=4000, context_length=256, n_layers=4, d_model=512, n_heads=8)
+    swiglu_model = TransformerLM(TransformerConfig(**base, d_ff=1344, ffn_type="swiglu"))
+    relu_model = TransformerLM(TransformerConfig(**base, d_ff=2048, ffn_type="relu"))
 
-    # Everything outside the FFN sub-layers should be identical between the two.
+    swiglu_total = swiglu_model.num_parameters()
+    relu_total = relu_model.num_parameters()
+    relative_difference = abs(relu_total - swiglu_total) / swiglu_total
+    assert relative_difference < 0.02, (
+        f"SwiGLU {swiglu_total:,} vs ReLU {relu_total:,} differ by "
+        f"{relative_difference:.2%}, outside the 2% §7.2 promises")
+
+    # Everything outside the FFN sub-layers must be identical, so the ablation
+    # changes the FFN and nothing else.
     swiglu_other = sum(p.numel() for n, p in swiglu_model.named_parameters() if ".ffn." not in n)
     relu_other = sum(p.numel() for n, p in relu_model.named_parameters() if ".ffn." not in n)
     assert swiglu_other == relu_other
+
+
+def test_d_ff_is_used_as_given_for_both_ffn_types():
+    """Regression test: TransformerBlock used to silently rescale d_ff by 1.5
+    for ReLU, so a caller asking for §7.2's d_ff=2048 got a 3072-wide FFN."""
+    cfg = make_config(ffn_type="relu", d_ff=64)
+    model = TransformerLM(cfg)
+    w1 = model.layers[0].ffn.w1.weight
+    assert w1.shape == (64, cfg.d_model)
 
 
 def test_causal_masking_future_tokens_do_not_affect_earlier_logits():

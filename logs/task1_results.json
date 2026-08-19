@@ -1,0 +1,74 @@
+{
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel",
+    "cpu_count": 12,
+    "python": "3.13.6"
+  },
+  "config": {
+    "train_files": [
+      "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-train.txt",
+      "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-train-part2.txt"
+    ],
+    "valid_file": "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-valid.txt",
+    "vocab_size": null,
+    "from_merges": null,
+    "second_vocab_size": 1000,
+    "study_sizes": [
+      1000,
+      2000,
+      4000,
+      8000,
+      16000
+    ],
+    "d_model": 512,
+    "workers": 1,
+    "q2_slice_mb": 10,
+    "limit_mb": 0,
+    "skip_encode": false,
+    "skip_q2": false,
+    "out_dir": "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy"
+  },
+  "q3": {
+    "metrics": [
+      {
+        "vocab_size": 1000,
+        "tokens": 700371128,
+        "bytes_per_token": 3.1303732940287623,
+        "chars_per_token": 3.129076989878429,
+        "embed_lm_head_params": 1024000
+      },
+      {
+        "vocab_size": 2000,
+        "tokens": 602917908,
+        "bytes_per_token": 3.6363542132505375,
+        "chars_per_token": 3.6348483797233637,
+        "embed_lm_head_params": 2048000
+      },
+      {
+        "vocab_size": 4000,
+        "tokens": 557120988,
+        "bytes_per_token": 3.9352728082827135,
+        "chars_per_token": 3.9336431909831404,
+        "embed_lm_head_params": 4096000
+      },
+      {
+        "vocab_size": 8000,
+        "tokens": 539843984,
+        "bytes_per_token": 4.061216092018171,
+        "chars_per_token": 4.059534320938177,
+        "embed_lm_head_params": 8192000
+      },
+      {
+        "vocab_size": 16000,
+        "tokens": 537233312,
+        "bytes_per_token": 4.0809514712296915,
+        "chars_per_token": 4.0792615276247055,
+        "embed_lm_head_params": 16384000
+      }
+    ],
+    "figure": "compression_ratio.png",
+    "csv": "logs\\vocab_study.csv",
+    "merges_file": "merges_upto16000.pkl"
+  }
+}
