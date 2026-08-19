@@ -15,6 +15,7 @@ Rows are buffered in memory and flushed at each evaluation, so no file I/O
 happens inside the timed part of a step.
 """
 import os
+import math
 import time
 import random
 import argparse
@@ -28,9 +29,12 @@ from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from .training_helpers.get_batch import get_batch
 from .training_helpers.manage_checkpoint import save_checkpoint, load_checkpoint
 
+# Kept for callers that import a device from here. `train()` deliberately uses
+# the device the model is already on rather than this global, so a caller can
+# train two models on two devices in one process.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-N_VAL_BATCHES = 5 
+N_VAL_BATCHES = 5   # §5.5: validation on a fixed set of batches, same every run
 
 
 def build_param_groups(model, weight_decay):
@@ -96,7 +100,7 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
           warmup_steps=200, weight_decay=0.1, grad_clip=1.0,
           eval_every=50, save_every=1000, checkpoint_dir="checkpoints",
           log_dir="logs", run_name="baseline", seed=0, resume_from=None,
-          use_amp=True):
+          use_amp=True, stop_on_divergence=True, divergence_factor=1.5):
     """Train `model` and return a history dict.
 
     params:
@@ -107,6 +111,11 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
         warmup_steps: 0 for no warmup (Q9's second arm)
         resume_from:  checkpoint path to restart from, mid-run
         use_amp:      request bf16 autocast; ignored off CUDA (§5.4)
+        stop_on_divergence: stop as soon as the run has clearly diverged
+                      (§7.1 - there is nothing to learn from the remaining
+                      steps and the GPU budget is not free)
+        divergence_factor: validation loss above this multiple of the loss at
+                      step 1 counts as diverged, alongside any non-finite loss
     returns:
         dict with the evaluation history, the per-step series, and the resolved
         run config - see the keys assembled at the end.
@@ -184,6 +193,9 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
     pending = []                # per-step rows, flushed at each evaluation
     total_tokens = 0
     start_time = time.perf_counter()
+    diverged, diverged_at, diverged_reason = False, None, None
+    baseline_val_loss = None    # the step-1 loss the divergence check compares to
+    last_step = start_step
 
     def sync():
         if run_device.type == "cuda":
@@ -223,6 +235,7 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
         step_time = time.perf_counter() - t0
 
         total_tokens += x.numel()
+        last_step = step
         grad_norm = float(grad_norm)
         pending.append((step, grad_norm, step_time))
         steps["step"].append(step)
@@ -255,6 +268,25 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
             print(f"step {step:5d} | train {train_loss:.4f} | val {val_loss:.4f} "
                   f"| lr {lr:.2e} | grad {grad_norm:.4f} | {step_time*1e3:.1f} ms/step")
 
+            # §7.1: kill a diverged run as soon as it is visibly diverged. The
+            # sweep is *required* to contain one, so this is a normal outcome
+            # to record rather than an error - `diverged` goes in the history
+            # and Q10 reads it back.
+            if baseline_val_loss is None:
+                baseline_val_loss = val_loss
+            if not math.isfinite(train_loss) or not math.isfinite(val_loss):
+                diverged, diverged_reason = True, "loss became NaN or infinite"
+            elif val_loss > divergence_factor * baseline_val_loss:
+                diverged, diverged_reason = True, (
+                    f"validation loss {val_loss:.4f} exceeded "
+                    f"{divergence_factor}x its step-1 value {baseline_val_loss:.4f}")
+            if diverged:
+                diverged_at = step
+                print(f"  ! DIVERGED at step {step}: {diverged_reason}")
+                if stop_on_divergence:
+                    print(f"  ! stopping early - {num_steps - step} steps not run")
+                    break
+
         if save_every and step % save_every == 0:
             save_checkpoint(model, optimizer, scheduler, step,
                             os.path.join(checkpoint_dir, f"{run_name}_step{step}.pt"),
@@ -265,10 +297,18 @@ def train(model, train_ids, val_ids, num_steps, batch_size, learning_rate=3e-3,
             for s, g, t in pending:
                 f.write(f"{s},{g:.6f},{t:.6f}\n")
 
+    run_config['completed_steps'] = last_step
+    run_config['diverged'] = diverged
     final_ckpt = os.path.join(checkpoint_dir, f"{run_name}_final.pt")
-    save_checkpoint(model, optimizer, scheduler, num_steps, final_ckpt, config=run_config)
-    print(f"[{run_name}] done - checkpoint {final_ckpt}")
+    save_checkpoint(model, optimizer, scheduler, last_step, final_ckpt, config=run_config)
+    print(f"[{run_name}] {'DIVERGED' if diverged else 'done'} at step {last_step} "
+          f"- checkpoint {final_ckpt}")
 
+    history["diverged"] = diverged
+    history["diverged_at"] = diverged_at
+    history["diverged_reason"] = diverged_reason
+    history["completed_steps"] = last_step
+    history["total_seconds"] = time.perf_counter() - start_time
     history["steps"] = steps
     history["config"] = run_config
     history["eval_log"] = eval_log
@@ -334,7 +374,12 @@ def build_parser():
     p.add_argument('--device', type=str, default=None)
     p.add_argument('--no_amp', dest='use_amp', action='store_false',
                    help="Force fp32. bf16 autocast is the default on CUDA.")
-    p.set_defaults(use_amp=True)
+    p.add_argument('--no_stop_on_divergence', dest='stop_on_divergence',
+                   action='store_false',
+                   help="Run a diverged job to completion instead of killing it "
+                        "at the first sign (section 7.1 says to kill it).")
+    p.add_argument('--divergence_factor', type=float, default=1.5)
+    p.set_defaults(use_amp=True, stop_on_divergence=True)
     return p
 
 
@@ -353,6 +398,7 @@ def main(argv=None):
     )
     model = TransformerLM(config).to(run_device)
 
+    # §5.5: memory-mapped, never read into RAM.
     train_ids = np.load(args.train_data, mmap_mode='r')
     val_ids = np.load(args.valid_data, mmap_mode='r')
 
@@ -363,7 +409,9 @@ def main(argv=None):
                  eval_every=args.eval_every, save_every=args.save_every,
                  checkpoint_dir=args.checkpoint_dir, log_dir=args.log_dir,
                  run_name=args.run_name, seed=args.seed,
-                 resume_from=args.resume_from, use_amp=args.use_amp)
+                 resume_from=args.resume_from, use_amp=args.use_amp,
+                 stop_on_divergence=args.stop_on_divergence,
+                 divergence_factor=args.divergence_factor)
 
 
 if __name__ == "__main__":

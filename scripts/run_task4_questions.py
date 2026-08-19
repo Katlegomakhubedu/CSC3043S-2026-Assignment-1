@@ -1,517 +1,967 @@
+"""Task 4 end to end: experiments, answering Q10-Q17 (§7.5).
+
+  * Q10 - learning-rate sweep, including a divergent run; the best learning
+          rate found here is the baseline for everything below.
+  * Q11 - no-RMSNorm ablation, at the best learning rate and at a reduced one.
+  * Q12 - NoPE against the RoPE baseline.
+  * Q13 - parameter-matched ReLU FFN against SwiGLU.
+  * Q14 - the ablation gaps side by side with the Q10 learning-rate gap.
+  * Q15 - perplexity, BPC and parameter count for the two vocabulary sizes.
+  * Q16 - GPU-hours by phase.
+  * Q17 - position-wise validation loss for NoPE and RoPE.
+
+§7's rule is that when you vary one thing you hold everything else fixed -
+seed, tokens processed, and validation batches included. That is what most of
+this file is for:
+
+  * One `Experiment` record per run, all sharing STANDARD_RUN. An experiment
+    names only what it changes, so nothing can drift between arms by accident.
+  * Models are built from a fixed seed, so two arms differ in the thing under
+    test and not in their initialisation.
+  * Runs are **cached**. Each finished run writes logs/<name>_run.json; asking
+    for it again reuses it rather than spending the GPU hours twice. `--force`
+    retrains. This is what makes Q14 (which reads six runs) cheap to re-run.
+  * Data is the memory-mapped encoded corpus from Task 1. Re-tokenizing the
+    2.2GB training text per question - what this script used to do - reads the
+    whole corpus into RAM three times over and violates §5.5.
+
+Every number printed also lands in logs/task4_results.json.
+
+Examples
+--------
+  python scripts/run_task4_questions.py --plan            # what would run, and roughly how long
+  python scripts/run_task4_questions.py --questions 10    # the sweep
+  python scripts/run_task4_questions.py --questions 11 12 13 14
+  python scripts/run_task4_questions.py --smoke           # whole pipeline, tiny, ~minutes
 """
-This script runs the necessary experiments to answer the questions for Task 4
-of the CSC3043S assignment.
-It performs the following actions:
-- Q10: Performs a learning-rate sweep.
-- Q11: Performs an ablation study on RMSNorm.
-- Q12: Performs an ablation study on positional encoding.
-- Q13: Performs an ablation study on SwiGLU vs. ReLU.
-- Q14: Compares the results from the ablation studies.
-- Q15: Compares models with two different vocabulary sizes.
-- Q16: Reports on GPU-hours used.
-- Q17: Generates a position-wise validation loss plot.
-"""
-import sys
-import os
+import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
-import torch
+import csv
+import json
+import math
+import platform
+import time
+from dataclasses import dataclass, field
+
 import numpy as np
-import pandas as pd
+import torch
+
+import matplotlib
+matplotlib.use("Agg")   # headless: this script only saves PNGs
 import matplotlib.pyplot as plt
 
-# Add the root directory to the Python path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from src.model import TransformerLM, TransformerConfig
-from src.tokenizer import BPETokenizer
-from src.train import train
-from src.evaluate import evaluate, evaluate_by_position
+from src.train import train, resolve_amp
+from src.evaluate import evaluate, evaluate_by_position, chars_from_meta
+from src.training_helpers.manage_checkpoint import load_checkpoint
 
-def get_model_and_tokenizer(vocab_size=4000, use_rmsnorm=True, use_rope=True, ffn_type='swiglu'):
-    """Initializes the model and tokenizer."""
-    # --- Model Configuration ---
-    config = TransformerConfig(
-        vocab_size=vocab_size,
-        context_length=256,
-        n_layers=4,
-        d_model=512,
-        n_heads=8,
-        d_ff=1344,
-        rope_theta=10000.0,
-        use_qk_norm=True,
-        use_rmsnorm=use_rmsnorm,
-        use_rope=use_rope,
-        ffn_type=ffn_type
-    )
-    model = TransformerLM(config)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # --- Tokenizer ---
-    try:
-        vocab_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'vocab.pkl')
-        merges_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'merges.pkl')
-        tokenizer = BPETokenizer.from_files(vocab_path, merges_path)
-    except FileNotFoundError:
-        print("Warning: vocab.pkl or merges.pkl not found. Using a dummy byte-level tokenizer.")
-        vocab = {i: str(i).encode() for i in range(config.vocab_size)}
-        merges = []
-        tokenizer = BPETokenizer(vocab, merges)
+# §4.1's model. Only the ablations change any of this, and each names what it
+# changes rather than restating the whole config.
+BASE_CONFIG = dict(vocab_size=4000, context_length=256, n_layers=4, d_model=512,
+                   n_heads=8, d_ff=1344, rope_theta=10000.0, use_qk_norm=True,
+                   use_rmsnorm=True, use_rope=True, ffn_type="swiglu")
 
-    return model, tokenizer, config
+# §7's standard run configuration. Every run inherits this; the sweep overrides
+# only `num_steps`, and §7.4's final model only `num_steps` again.
+STANDARD_RUN = dict(batch_size=32, num_steps=5000, warmup_steps=200,
+                    weight_decay=0.1, grad_clip=1.0, eval_every=50,
+                    save_every=1000, seed=42)
 
-def run_q10(args):
+SWEEP_LRS = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2]   # §7.1's suggested grid
+RELU_D_FF = 2048                             # §7.2: matches SwiGLU's 1344 to within 2%
+INIT_SEED = 0                                # model init, identical for every arm
+
+
+# ---------------------------------------------------------------------------
+# experiment records
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Experiment:
+    """One training run: a name, what it changes, and nothing else.
+
+    `config_overrides` are TransformerConfig fields; `run_overrides` are train()
+    arguments. Everything unnamed comes from BASE_CONFIG and STANDARD_RUN, so an
+    ablation cannot silently differ from its baseline in a second way.
     """
-    Performs a learning-rate sweep.
+    name: str
+    phase: str                                   # for Q16's GPU-hours table
+    lr: float
+    config_overrides: dict = field(default_factory=dict)
+    run_overrides: dict = field(default_factory=dict)
+    note: str = ""
+
+    def model_config(self, vocab_size=None):
+        cfg = dict(BASE_CONFIG)
+        cfg.update(self.config_overrides)
+        if vocab_size is not None:
+            cfg["vocab_size"] = vocab_size
+        return cfg
+
+    def run_kwargs(self):
+        kwargs = dict(STANDARD_RUN)
+        kwargs.update(self.run_overrides)
+        kwargs["learning_rate"] = self.lr
+        return kwargs
+
+
+def build_model(config, device):
+    """A model built from a fixed seed, so arms differ only by design."""
+    torch.manual_seed(INIT_SEED)
+    return TransformerLM(TransformerConfig(**config)).to(device)
+
+
+# ---------------------------------------------------------------------------
+# data
+# ---------------------------------------------------------------------------
+
+def load_corpus(args, vocab_size):
+    """Memory-mapped encoded arrays for a vocabulary size, plus char counts.
+
+    Task 1 §3.5 writes `train_encoded.npy` / `valid_encoded.npy` for the primary
+    tokenizer and a `vocab<N>_` prefixed pair for the second one. Nothing here
+    re-tokenizes: the encoded corpus is the input.
     """
-    print("--- Running Q10: Learning-Rate Sweep ---")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
+    if args.smoke:
+        return synthetic_corpus(vocab_size)
 
-    # Load data
-    train_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-train.txt')
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    
-    print(f"Loading training data from: {train_data_path}")
-    with open(train_data_path, 'r', encoding='utf-8') as f:
-        train_text = f.read()
+    prefix = "" if vocab_size == BASE_CONFIG["vocab_size"] else f"vocab{vocab_size}_"
+    train_npy = os.path.join(args.data_dir, f"{prefix}train_encoded.npy")
+    valid_npy = os.path.join(args.data_dir, f"{prefix}valid_encoded.npy")
 
-    print(f"Loading validation data from: {val_data_path}")
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
+    missing = [p for p in (train_npy, valid_npy) if not os.path.exists(p)]
+    if missing:
+        raise SystemExit(
+            "Task 4 needs the encoded corpus from Task 1 section 3.5, and these are "
+            "missing:\n  " + "\n  ".join(os.path.basename(p) for p in missing) +
+            f"\n\nRun Task 1 phase 2 to produce them:\n"
+            f"  python scripts/run_task_1.py --vocab_size {vocab_size} "
+            f"--from_merges merges_upto16000.pkl\n\n"
+            f"Or point --data_dir at wherever they already are, or use --smoke "
+            f"to exercise this script on synthetic data first.")
 
-    # Get tokenizer
-    _, tokenizer, _ = get_model_and_tokenizer()
+    train_chars, convention = chars_from_meta(train_npy)
+    valid_chars, _ = chars_from_meta(valid_npy)
+    return {
+        "train": np.load(train_npy, mmap_mode="r"),
+        "valid": np.load(valid_npy, mmap_mode="r"),
+        "valid_path": valid_npy,
+        "valid_chars": valid_chars,
+        "train_chars": train_chars,
+        "char_convention": convention,
+        "vocab_size": vocab_size,
+        "source": os.path.basename(train_npy),
+    }
 
-    # Tokenize data
-    print("Tokenizing training data...")
-    train_ids = tokenizer.encode(train_text)
-    print("Tokenizing validation data...")
-    val_ids = tokenizer.encode(val_text)
 
-    learning_rates = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2]
-    
-    for lr in learning_rates:
-        print(f"\n--- Training with learning rate: {lr} ---")
-        
-        model, _, config = get_model_and_tokenizer()
-        model.to(device)
+def synthetic_corpus(vocab_size):
+    """Random tokens, for --smoke only. There is nothing here to learn."""
+    rng = np.random.default_rng(0)
+    return {
+        "train": rng.integers(0, vocab_size, size=200_000, dtype=np.uint16),
+        "valid": rng.integers(0, vocab_size, size=40_000, dtype=np.uint16),
+        "valid_path": None,
+        "valid_chars": 40_000 * 4,     # a plausible chars-per-token, for plumbing only
+        "train_chars": 200_000 * 4,
+        "char_convention": "synthetic",
+        "vocab_size": vocab_size,
+        "source": "synthetic (--smoke)",
+    }
 
-        run_name = f"lr_sweep_{lr:.0e}"
 
-        train_args = {
-            'num_steps': args.steps,
-            'batch_size': args.batch_size,
-            'learning_rate': lr,
-            'warmup_steps': args.warmup_steps,
-            'weight_decay': args.weight_decay,
-            'grad_clip': args.grad_clip,
-            'eval_every': args.eval_every,
-            'save_every': args.save_every,
-            'checkpoint_dir': args.checkpoint_dir,
-            'log_dir': args.log_dir,
-            'run_name': run_name,
-            'seed': args.seed,
-            'resume_from': args.resume_from,
-            'use_amp': args.use_amp,
-        }
+# ---------------------------------------------------------------------------
+# the run cache
+# ---------------------------------------------------------------------------
 
-        train(
-            model,
-            np.array(train_ids),
-            np.array(val_ids),
-            **train_args
-        )
+def run_meta_path(args, name):
+    return os.path.join(args.log_dir, f"{name}_run.json")
 
-        print(f"--- Finished training with learning rate: {lr} ---")
 
-def run_q11(args):
+def load_run(args, name):
+    """A finished run's record, or None."""
+    path = run_meta_path(args, name)
+    if args.force or not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def ensure_run(args, exp, corpus, device):
+    """Train `exp` unless it has already been run, and return its record.
+
+    These are 5,000-step GPU jobs; Q14 alone reads six of them. Re-running the
+    analysis must not re-run the training, so a finished run is reused unless
+    --force says otherwise.
     """
-    Performs an ablation study on RMSNorm.
+    cached = load_run(args, exp.name)
+    if cached is not None:
+        status = "DIVERGED" if cached.get("diverged") else "ok"
+        print(f"  [cached] {exp.name}: final val {cached['final_val_loss']:.4f} ({status})")
+        return cached
+
+    config = exp.model_config(corpus["vocab_size"])
+    kwargs = exp.run_kwargs()
+    print(f"\n--- {exp.name} ({exp.phase}) lr={exp.lr:.1e} "
+          f"{exp.note or ''}".rstrip() + " ---")
+
+    model = build_model(config, device)
+    started = time.time()
+    history = train(model, corpus["train"], corpus["valid"],
+                    run_name=exp.name, log_dir=args.log_dir,
+                    checkpoint_dir=args.checkpoint_dir,
+                    use_amp=not args.no_amp, **kwargs)
+    wall_seconds = time.time() - started
+
+    record = {
+        "name": exp.name,
+        "phase": exp.phase,
+        "note": exp.note,
+        "learning_rate": exp.lr,
+        "model_config": config,
+        "run_config": {k: v for k, v in kwargs.items()},
+        "n_parameters": sum(p.numel() for p in model.parameters()),
+        "diverged": history["diverged"],
+        "diverged_at": history["diverged_at"],
+        "diverged_reason": history["diverged_reason"],
+        "completed_steps": history["completed_steps"],
+        "final_val_loss": history["val_loss"][-1],
+        "final_train_loss": history["train_loss"][-1],
+        "wall_seconds": wall_seconds,
+        "device": str(device),
+        "amp_enabled": history["config"]["amp_enabled"],
+        "checkpoint": history["final_checkpoint"],
+        "eval_log": history["eval_log"],
+        "data_source": corpus["source"],
+    }
+    with open(run_meta_path(args, exp.name), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2, default=str)
+    del model
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return record
+
+
+def read_curve(record):
+    """(steps, val_loss) from a run's evaluation CSV (§5.5: plots come from logs)."""
+    with open(record["eval_log"], newline="") as f:
+        rows = list(csv.DictReader(f))
+    return [int(r["step"]) for r in rows], [float(r["val_loss"]) for r in rows]
+
+
+def load_trained_model(record, device):
+    """Rebuild a run's model from its recorded config and restore its weights."""
+    model = TransformerLM(TransformerConfig(**record["model_config"])).to(device)
+    load_checkpoint(record["checkpoint"], model, map_location=device,
+                    restore_rng=False)
+    model.eval()
+    return model
+
+
+# ---------------------------------------------------------------------------
+# experiment definitions
+# ---------------------------------------------------------------------------
+
+def sweep_experiments(args):
+    """§7.1: at least five peak learning rates over at least two orders of
+    magnitude, at a reduced step count with the cosine period matched to it."""
+    return [Experiment(name=f"lr_sweep_{lr:.0e}", phase="lr_sweep", lr=lr,
+                       run_overrides={"num_steps": args.sweep_steps,
+                                      "warmup_steps": min(STANDARD_RUN["warmup_steps"],
+                                                          max(1, args.sweep_steps // 10))},
+                       note=f"sweep at {args.sweep_steps} steps")
+            for lr in args.sweep_lrs]
+
+
+def baseline_experiment(best_lr):
+    """§7.1: the standard run at the best learning rate. Everything else is
+    compared against this one run."""
+    return Experiment(name="baseline", phase="baseline", lr=best_lr,
+                      note="standard run, the comparison point for sections 7.2-7.4")
+
+
+def ablation_experiments(best_lr, reduced_lr):
+    """§7.2's three ablations, each one standard run against the baseline."""
+    return [
+        Experiment(name="ablation_no_rmsnorm", phase="ablations", lr=best_lr,
+                   config_overrides={"use_rmsnorm": False},
+                   note="RMSNorm removed from blocks and final norm"),
+        # §7.2 asks for a reduced learning rate as well, because this ablation
+        # is the one that typically will not train at the baseline's lr.
+        Experiment(name="ablation_no_rmsnorm_lowlr", phase="ablations", lr=reduced_lr,
+                   config_overrides={"use_rmsnorm": False},
+                   note="same ablation at a reduced learning rate (section 7.2)"),
+        Experiment(name="ablation_nope", phase="ablations", lr=best_lr,
+                   config_overrides={"use_rope": False},
+                   note="RoPE removed entirely"),
+        Experiment(name="ablation_relu", phase="ablations", lr=best_lr,
+                   config_overrides={"ffn_type": "relu", "d_ff": RELU_D_FF},
+                   note=f"ReLU FFN at d_ff={RELU_D_FF}, parameter-matched"),
+    ]
+
+
+def reduced_lr(args, best_lr):
+    """Section 7.2's lower learning rate for the no-RMSNorm run.
+
+    Relative to the best learning rate rather than absolute: a fixed value ends
+    up *above* the baseline whenever the sweep picks something smaller, which
+    would make "the same ablation at a reduced learning rate" untrue.
     """
-    print("--- Running Q11: RMSNorm Ablation Study ---")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
+    if args.reduced_lr is not None:
+        return args.reduced_lr
+    return best_lr / args.reduced_lr_factor
 
-    # Load and tokenize data
-    _, tokenizer, _ = get_model_and_tokenizer()
-    train_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-train.txt')
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    with open(train_data_path, 'r', encoding='utf-8') as f:
-        train_text = f.read()
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
-    train_ids = tokenizer.encode(train_text)
-    val_ids = tokenizer.encode(val_text)
 
-    train_args = vars(args).copy()
-    train_args.pop('questions')
+def resolve_best_lr(args, results):
+    """The best learning rate: from Q10 if it has been run, else --best_lr."""
+    q10 = results.get("q10") or (load_run(args, "_q10_summary") or {})
+    if args.best_lr is not None:
+        return args.best_lr, "--best_lr"
+    if q10.get("best_lr") is not None:
+        return q10["best_lr"], "Q10 sweep"
+    raise SystemExit(
+        "No best learning rate available. Run the sweep first:\n"
+        "  python scripts/run_task4_questions.py --questions 10\n"
+        "or pass one explicitly with --best_lr.")
 
-    # --- Baseline Model (with RMSNorm) ---
-    print("\n--- Training baseline model (with RMSNorm) ---")
-    model_baseline, _, _ = get_model_and_tokenizer(use_rmsnorm=True)
-    model_baseline.to(device)
-    
-    train_args['run_name'] = 'rmsnorm_baseline'
-    train(model_baseline, np.array(train_ids), np.array(val_ids), **train_args)
 
-    # --- Ablation Model (without RMSNorm) ---
-    print("\n--- Training ablation model (without RMSNorm) ---")
-    model_ablation, _, _ = get_model_and_tokenizer(use_rmsnorm=False)
-    model_ablation.to(device)
+# ---------------------------------------------------------------------------
+# Q10 - learning-rate sweep
+# ---------------------------------------------------------------------------
 
-    train_args['run_name'] = 'rmsnorm_ablation'
-    train(model_ablation, np.array(train_ids), np.array(val_ids), **train_args)
+def run_q10(args, corpus, device, results):
+    print("\n" + "=" * 70)
+    print("Q10: learning-rate sweep")
+    print("=" * 70)
 
-def run_q12(args):
-    """
-    Performs an ablation study on positional encoding.
-    """
-    print("--- Running Q12: Positional Encoding Ablation Study ---")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
+    records = [ensure_run(args, exp, corpus, device)
+               for exp in sweep_experiments(args)]
 
-    # Load and tokenize data
-    _, tokenizer, _ = get_model_and_tokenizer()
-    train_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-train.txt')
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    with open(train_data_path, 'r', encoding='utf-8') as f:
-        train_text = f.read()
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
-    train_ids = tokenizer.encode(train_text)
-    val_ids = tokenizer.encode(val_text)
+    converged = [r for r in records if not r["diverged"]]
+    diverged = [r for r in records if r["diverged"]]
+    if not converged:
+        raise SystemExit("every sweep run diverged - lower the grid and re-run")
 
-    train_args = vars(args).copy()
-    train_args.pop('questions')
+    ranked = sorted(converged, key=lambda r: r["final_val_loss"])
+    best, second = ranked[0], (ranked[1] if len(ranked) > 1 else None)
+    lowest_diverging = min((r["learning_rate"] for r in diverged), default=None)
 
-    # --- Baseline Model (with RoPE) ---
-    print("\n--- Training baseline model (with RoPE) ---")
-    model_baseline, _, _ = get_model_and_tokenizer(use_rope=True)
-    model_baseline.to(device)
-    
-    train_args['run_name'] = 'rope_baseline'
-    train(model_baseline, np.array(train_ids), np.array(val_ids), **train_args)
+    png = plot_q10(args, records)
 
-    # --- Ablation Model (without RoPE) ---
-    print("\n--- Training ablation model (without RoPE) ---")
-    model_ablation, _, _ = get_model_and_tokenizer(use_rope=False)
-    model_ablation.to(device)
+    print(f"\n[Q10] {len(records)} runs at {args.sweep_steps} steps:")
+    print(f"  {'lr':>10} {'final val':>11} {'steps':>7}  status")
+    for r in sorted(records, key=lambda r: r["learning_rate"]):
+        status = f"DIVERGED at {r['diverged_at']}" if r["diverged"] else "ok"
+        print(f"  {r['learning_rate']:>10.0e} {r['final_val_loss']:>11.4f} "
+              f"{r['completed_steps']:>7}  {status}")
+    print(f"\n  best learning rate:      {best['learning_rate']:.0e} "
+          f"(val {best['final_val_loss']:.4f})")
+    if second:
+        print(f"  second best:             {second['learning_rate']:.0e} "
+              f"(val {second['final_val_loss']:.4f}, "
+              f"+{second['final_val_loss'] - best['final_val_loss']:.4f})")
+    print(f"  lowest diverging lr:     "
+          f"{f'{lowest_diverging:.0e}' if lowest_diverging else 'none diverged'}")
+    if lowest_diverging:
+        print(f"  usable band:             {best['learning_rate']:.0e} to "
+              f"{lowest_diverging:.0e} - a factor of "
+              f"{lowest_diverging / best['learning_rate']:.1f}")
+    print(f"  figure: {png}")
 
-    train_args['run_name'] = 'rope_ablation'
-    train(model_ablation, np.array(train_ids), np.array(val_ids), **train_args)
+    results["q10"] = {
+        "sweep_steps": args.sweep_steps,
+        "runs": [{k: r[k] for k in ("name", "learning_rate", "final_val_loss",
+                                    "diverged", "diverged_at", "completed_steps")}
+                 for r in records],
+        "best_lr": best["learning_rate"],
+        "best_val_loss": best["final_val_loss"],
+        "second_best_lr": second["learning_rate"] if second else None,
+        "second_best_val_loss": second["final_val_loss"] if second else None,
+        "lr_gap": (second["final_val_loss"] - best["final_val_loss"]) if second else None,
+        "lowest_diverging_lr": lowest_diverging,
+        "margin_to_divergence": (lowest_diverging / best["learning_rate"]
+                                 if lowest_diverging else None),
+        "figure": os.path.basename(png),
+    }
+    return results["q10"]
 
-def run_q13(args):
-    """
-    Performs an ablation study on SwiGLU vs. ReLU.
-    """
-    print("--- Running Q13: SwiGLU vs. ReLU Ablation Study ---")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
 
-    # Load and tokenize data
-    _, tokenizer, _ = get_model_and_tokenizer()
-    train_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-train.txt')
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    with open(train_data_path, 'r', encoding='utf-8') as f:
-        train_text = f.read()
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
-    train_ids = tokenizer.encode(train_text)
-    val_ids = tokenizer.encode(val_text)
+def plot_q10(args, records):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    colours = plt.cm.viridis(np.linspace(0, 0.9, len(records)))
+    for colour, r in zip(colours, sorted(records, key=lambda r: r["learning_rate"])):
+        steps, val = read_curve(r)
+        label = f"{r['learning_rate']:.0e}" + (" (diverged)" if r["diverged"] else "")
+        ax.plot(steps, val, "--" if r["diverged"] else "-", color=colour,
+                label=label, linewidth=1.6)
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Validation loss")
+    ax.set_title(f"Learning-rate sweep ({args.sweep_steps} steps)")
 
-    train_args = vars(args).copy()
-    train_args.pop('questions')
+    # A diverged run reaches a loss many times the others', which flattens every
+    # converged curve into one indistinguishable band. Scale the axis to the
+    # runs that trained and let the divergent one leave the top of the plot -
+    # it is still on the figure, and running off the axis reads as divergence.
+    converged = [read_curve(r)[1] for r in records if not r["diverged"]]
+    if converged and any(r["diverged"] for r in records):
+        low = min(min(v) for v in converged)
+        high = max(max(v) for v in converged)
+        margin = 0.15 * (high - low) or 0.5
+        ax.set_ylim(low - margin, high + margin)
+        ax.annotate("divergent run continues off-scale", xy=(0.02, 0.95),
+                    xycoords="axes fraction", fontsize=8, color="grey")
 
-    # --- Baseline Model (with SwiGLU) ---
-    print("\n--- Training baseline model (with SwiGLU) ---")
-    model_baseline, _, _ = get_model_and_tokenizer(ffn_type='swiglu')
-    model_baseline.to(device)
-    
-    train_args['run_name'] = 'swiglu_baseline'
-    train(model_baseline, np.array(train_ids), np.array(val_ids), **train_args)
+    ax.legend(title="peak lr", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    png = os.path.join(args.out_dir, "task4_q10_lr_sweep.png")
+    fig.savefig(png, dpi=150)
+    plt.close(fig)
+    return png
 
-    # --- Ablation Model (with ReLU) ---
-    print("\n--- Training ablation model (with ReLU) ---")
-    model_ablation, _, _ = get_model_and_tokenizer(ffn_type='relu')
-    model_ablation.to(device)
 
-    train_args['run_name'] = 'relu_ablation'
-    train(model_ablation, np.array(train_ids), np.array(val_ids), **train_args)
+# ---------------------------------------------------------------------------
+# Q11-Q13 - ablations
+# ---------------------------------------------------------------------------
 
-def run_q14(args):
-    """
-    Compares the performance gaps from the completed ablations.
-    """
-    print("--- Running Q14: Ablation Performance Comparison ---")
+def ablation_figure(args, baseline, arms, title, filename, ylabel="Validation loss"):
+    """One ablation against the baseline, from the run logs."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    steps, val = read_curve(baseline)
+    ax.plot(steps, val, "-", color="tab:blue", label="baseline", linewidth=1.8)
+    for colour, r in zip(("tab:red", "tab:orange", "tab:green"), arms):
+        s, v = read_curve(r)
+        label = r["note"] or r["name"]
+        if r["diverged"]:
+            label += " (diverged)"
+        ax.plot(s, v, "--", color=colour, label=label, linewidth=1.5)
+    ax.set_xlabel("Step")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    png = os.path.join(args.out_dir, filename)
+    fig.savefig(png, dpi=150)
+    plt.close(fig)
+    return png
 
-    log_dir = args.log_dir
-    
-    # --- Learning Rate Sweep ---
-    lr_logs = [f for f in os.listdir(log_dir) if f.startswith('lr_sweep_')]
-    lr_losses = {}
-    for log in lr_logs:
-        try:
-            lr = float(log.split('_')[-1].replace('.csv', ''))
-            df = pd.read_csv(os.path.join(log_dir, log))
-            if not df.empty:
-                lr_losses[lr] = df['val_loss'].iloc[-1]
-        except (ValueError, IndexError):
-            print(f"Could not parse learning rate from log file name: {log}")
+
+def run_ablation(args, corpus, device, results, question, names, title, filename):
+    """Shared body of Q11-Q13: train the baseline and the named arms, plot, report."""
+    best_lr, lr_source = resolve_best_lr(args, results)
+    baseline = ensure_run(args, baseline_experiment(best_lr), corpus, device)
+
+    by_name = {e.name: e for e in ablation_experiments(best_lr, reduced_lr(args, best_lr))}
+    arms = [ensure_run(args, by_name[n], corpus, device) for n in names]
+
+    png = ablation_figure(args, baseline, arms, title, filename)
+
+    print(f"\n[{question.upper()}] against the baseline "
+          f"(lr {best_lr:.0e}, from {lr_source}):")
+    print(f"  {'run':<32} {'final val':>11} {'gap':>9}")
+    print(f"  {'baseline':<32} {baseline['final_val_loss']:>11.4f} {'-':>9}")
+    entries = []
+    for r in arms:
+        gap = r["final_val_loss"] - baseline["final_val_loss"]
+        flag = "  DIVERGED" if r["diverged"] else ""
+        print(f"  {r['name']:<32} {r['final_val_loss']:>11.4f} {gap:>+9.4f}{flag}")
+        entries.append({"name": r["name"], "note": r["note"],
+                        "learning_rate": r["learning_rate"],
+                        "final_val_loss": r["final_val_loss"], "gap": gap,
+                        "diverged": r["diverged"]})
+    print(f"  figure: {png}")
+
+    results[question] = {
+        "best_lr": best_lr,
+        "baseline_val_loss": baseline["final_val_loss"],
+        "arms": entries,
+        "figure": os.path.basename(png),
+    }
+    return results[question]
+
+
+def run_q11(args, corpus, device, results):
+    print("\n" + "=" * 70)
+    print("Q11: RMSNorm ablation")
+    print("=" * 70)
+    return run_ablation(
+        args, corpus, device, results, "q11",
+        ["ablation_no_rmsnorm", "ablation_no_rmsnorm_lowlr"],
+        "No RMSNorm against the baseline", "task4_q11_rmsnorm.png")
+
+
+def run_q12(args, corpus, device, results):
+    print("\n" + "=" * 70)
+    print("Q12: positional encoding ablation (NoPE)")
+    print("=" * 70)
+    return run_ablation(
+        args, corpus, device, results, "q12", ["ablation_nope"],
+        "NoPE against the RoPE baseline", "task4_q12_nope.png")
+
+
+def run_q13(args, corpus, device, results):
+    print("\n" + "=" * 70)
+    print("Q13: SwiGLU against a parameter-matched ReLU FFN")
+    print("=" * 70)
+    out = run_ablation(
+        args, corpus, device, results, "q13", ["ablation_relu"],
+        f"SwiGLU against ReLU (d_ff={RELU_D_FF})", "task4_q13_swiglu_relu.png")
+
+    # §7.2 claims the two are matched to within 2%; state the actual counts so
+    # the comparison can be read as parameter-matched rather than assumed to be.
+    baseline = load_run(args, "baseline")
+    relu = load_run(args, "ablation_relu")
+    if baseline and relu:
+        delta = abs(relu["n_parameters"] - baseline["n_parameters"]) / baseline["n_parameters"]
+        print(f"  parameters: SwiGLU {baseline['n_parameters']:,} vs "
+              f"ReLU {relu['n_parameters']:,} ({delta:.2%} apart)")
+        out["parameter_delta_fraction"] = delta
+        out["swiglu_parameters"] = baseline["n_parameters"]
+        out["relu_parameters"] = relu["n_parameters"]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Q14 - the gaps side by side
+# ---------------------------------------------------------------------------
+
+def run_q14(args, corpus, device, results):
+    """§7.5: the ablation gaps against the Q10 learning-rate gap, one table."""
+    print("\n" + "=" * 70)
+    print("Q14: which design choice mattered most")
+    print("=" * 70)
+
+    q10 = results.get("q10")
+    if q10 is None:
+        raise SystemExit("Q14 reads Q10's learning-rate gap - run --questions 10 first.")
+
+    baseline = load_run(args, "baseline")
+    if baseline is None:
+        raise SystemExit("Q14 needs the baseline run - run --questions 11 (or 12, 13) first.")
+
+    rows = []
+    if q10.get("lr_gap") is not None:
+        rows.append({
+            "choice": f"learning rate ({q10['best_lr']:.0e} vs "
+                      f"{q10['second_best_lr']:.0e})",
+            "gap": q10["lr_gap"],
+            "note": "best vs second-best in the sweep"})
+
+    for name, label in (("ablation_no_rmsnorm", "RMSNorm"),
+                        ("ablation_nope", "RoPE (vs NoPE)"),
+                        ("ablation_relu", "SwiGLU (vs ReLU)")):
+        record = load_run(args, name)
+        if record is None:
+            print(f"  (skipping {label} - {name} has not been run)")
             continue
+        rows.append({
+            "choice": label,
+            "gap": record["final_val_loss"] - baseline["final_val_loss"],
+            "note": ("ablation diverged" if record["diverged"]
+                     else "ablation minus baseline")})
 
-    if len(lr_losses) < 2:
-        print("Not enough learning rate sweep logs to compare.")
-        lr_gap = 'N/A'
+    rows.sort(key=lambda r: abs(r["gap"]), reverse=True)
+
+    print(f"\n  {'design choice':<38} {'val loss gap':>13}  note")
+    for r in rows:
+        print(f"  {r['choice']:<38} {r['gap']:>+13.4f}  {r['note']}")
+    if rows:
+        print(f"\n  Largest effect at this scale: {rows[0]['choice']} "
+              f"({rows[0]['gap']:+.4f}).")
+
+    results["q14"] = {"baseline_val_loss": baseline["final_val_loss"], "rows": rows}
+    return results["q14"]
+
+
+# ---------------------------------------------------------------------------
+# Q15 - vocabulary size
+# ---------------------------------------------------------------------------
+
+def run_q15(args, corpus, device, results):
+    """§7.3: one standard run per tokenizer, compared on BPC rather than
+    perplexity - the two vocabularies are not counting the same events."""
+    print("\n" + "=" * 70)
+    print(f"Q15: vocabulary size {BASE_CONFIG['vocab_size']} against {args.second_vocab_size}")
+    print("=" * 70)
+
+    if args.second_vocab_size == BASE_CONFIG["vocab_size"]:
+        # §7.3 is a comparison against a *clearly different* vocabulary size.
+        # Comparing a tokenizer with itself would print two identical rows and
+        # a conclusion about which is better, which is worse than not answering.
+        print(f"  ! --second_vocab_size equals the primary vocabulary "
+              f"({args.second_vocab_size}); section 7.3 needs a clearly different "
+              f"one. Skipping Q15.")
+        results["q15"] = {"skipped": "second_vocab_size equals the primary vocabulary"}
+        return results["q15"]
+
+    best_lr, _ = resolve_best_lr(args, results)
+    entries = []
+
+    for vocab_size in (BASE_CONFIG["vocab_size"], args.second_vocab_size):
+        primary = vocab_size == BASE_CONFIG["vocab_size"]
+        vocab_corpus = corpus if primary else load_corpus(args, vocab_size)
+        exp = (baseline_experiment(best_lr) if primary else
+               Experiment(name=f"vocab_{vocab_size}", phase="vocab_study", lr=best_lr,
+                          note=f"second tokenizer, vocab {vocab_size} (section 7.3)"))
+        record = ensure_run(args, exp, vocab_corpus, device)
+
+        model = load_trained_model(record, device)
+        metrics = evaluate(model, vocab_corpus["valid"], args.eval_batch_size,
+                           record["model_config"]["context_length"], device,
+                           total_chars=vocab_corpus["valid_chars"],
+                           amp_enabled=resolve_amp(not args.no_amp, device)[0],
+                           max_windows=args.eval_windows)
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        entries.append({
+            "vocab_size": vocab_size, "run": record["name"],
+            "n_parameters": record["n_parameters"],
+            "loss": metrics["loss"], "perplexity": metrics["perplexity"],
+            "bpc": metrics.get("bpc"), "n_tokens": metrics["n_tokens"],
+            "chars_per_token": metrics.get("chars_per_token"),
+            "char_convention": vocab_corpus["char_convention"],
+        })
+
+    print(f"\n[Q15] held-out validation, characters counted "
+          f"{entries[0]['char_convention']}:")
+    print(f"  {'vocab':>7} {'params':>12} {'loss':>8} {'perplexity':>12} {'BPC':>8} {'chars/tok':>10}")
+    for e in entries:
+        bpc = f"{e['bpc']:.4f}" if e["bpc"] is not None else "n/a"
+        cpt = f"{e['chars_per_token']:.3f}" if e["chars_per_token"] else "n/a"
+        print(f"  {e['vocab_size']:>7} {e['n_parameters']:>12,} {e['loss']:>8.4f} "
+              f"{e['perplexity']:>12.2f} {bpc:>8} {cpt:>10}")
+
+    if all(e["bpc"] is not None for e in entries):
+        better = min(entries, key=lambda e: e["bpc"])
+        print(f"\n  Lower BPC: vocab {better['vocab_size']} "
+              f"({better['bpc']:.4f}). Perplexity is not comparable across these "
+              f"two - they are not counting the same events - so BPC decides it.")
+        results_better = better["vocab_size"]
     else:
-        sorted_lrs = sorted(lr_losses.items(), key=lambda item: item[1])
-        best_lr, best_loss = sorted_lrs[0]
-        second_best_lr, second_best_loss = sorted_lrs[1]
-        lr_gap = second_best_loss - best_loss
-    
-    # --- RMSNorm Ablation ---
+        results_better = None
+
+    results["q15"] = {"models": entries, "better_on_bpc": results_better}
+    return results["q15"]
+
+
+# ---------------------------------------------------------------------------
+# Q16 - GPU hours
+# ---------------------------------------------------------------------------
+
+def run_q16(args, corpus, device, results):
+    """§7.5: hours by phase, from the per-run records rather than a tally kept
+    by hand."""
+    print("\n" + "=" * 70)
+    print("Q16: GPU-hours by phase")
+    print("=" * 70)
+
+    phases = {}
+    for filename in sorted(os.listdir(args.log_dir)):
+        if not filename.endswith("_run.json"):
+            continue
+        with open(os.path.join(args.log_dir, filename), encoding="utf-8") as f:
+            record = json.load(f)
+        phase = phases.setdefault(record.get("phase", "other"),
+                                  {"seconds": 0.0, "runs": 0, "steps": 0})
+        phase["seconds"] += record.get("wall_seconds", 0.0)
+        phase["runs"] += 1
+        phase["steps"] += record.get("completed_steps", 0)
+
+    measured = sum(p["seconds"] for p in phases.values())
+    # Development and debugging is not in the logs by construction: it is the
+    # time spent before any run was worth keeping. It has to be supplied.
+    dev_hours = args.dev_hours
+
+    print(f"\n  {'phase':<16} {'runs':>5} {'steps':>9} {'hours':>8}")
+    for name, p in sorted(phases.items(), key=lambda kv: -kv[1]["seconds"]):
+        print(f"  {name:<16} {p['runs']:>5} {p['steps']:>9,} {p['seconds']/3600:>8.2f}")
+    print(f"  {'development':<16} {'-':>5} {'-':>9} {dev_hours:>8.2f}  (--dev_hours)")
+    print(f"  {'TOTAL':<16} {'':>5} {'':>9} {measured/3600 + dev_hours:>8.2f}")
+
+    if device.type != "cuda":
+        print("\n  ! These are wall-clock hours on "
+              f"{device.type}, not GPU-hours. Re-run on the GPU for the reported figure.")
+
+    results["q16"] = {
+        "phases": {k: {**v, "hours": v["seconds"] / 3600} for k, v in phases.items()},
+        "development_hours": dev_hours,
+        "measured_hours": measured / 3600,
+        "total_hours": measured / 3600 + dev_hours,
+        "device": str(device),
+        "is_gpu": device.type == "cuda",
+    }
+    return results["q16"]
+
+
+# ---------------------------------------------------------------------------
+# Q17 - position-wise loss
+# ---------------------------------------------------------------------------
+
+def run_q17(args, corpus, device, results):
+    """§7.5: mean validation loss by position, bucketed, for NoPE and RoPE.
+
+    The aggregate curve averages over the whole window, so it cannot show
+    *where* a model without positional information loses out. This can.
+    """
+    print("\n" + "=" * 70)
+    print("Q17: position-wise validation loss")
+    print("=" * 70)
+
+    best_lr, _ = resolve_best_lr(args, results)
+    ensure_run(args, baseline_experiment(best_lr), corpus, device)
+    by_name = {e.name: e for e in ablation_experiments(best_lr, reduced_lr(args, best_lr))}
+    ensure_run(args, by_name["ablation_nope"], corpus, device)
+
+    amp = resolve_amp(not args.no_amp, device)[0]
+    series = {}
+    for label, name in (("RoPE (baseline)", "baseline"), ("NoPE", "ablation_nope")):
+        record = load_run(args, name)
+        model = load_trained_model(record, device)
+        series[label] = evaluate_by_position(
+            model, corpus["valid"], args.eval_batch_size,
+            record["model_config"]["context_length"], device,
+            n_buckets=args.position_buckets, amp_enabled=amp,
+            max_windows=args.eval_windows)
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    png = plot_q17(args, series)
+
+    print(f"\n[Q17] mean validation loss by position "
+          f"({series['NoPE']['n_windows']:,} windows):")
+    header = "  " + f"{'positions':<14}" + "".join(f"{k:>18}" for k in series)
+    print(header)
+    for i in range(args.position_buckets):
+        span = series["NoPE"]["buckets"][i]
+        label = f"{span['start']}-{span['end']}"
+        row = "  " + f"{label:<14}"
+        row += "".join(f"{s['buckets'][i]['loss']:>18.4f}" for s in series.values())
+        print(row)
+
+    first = {k: s["buckets"][0]["loss"] for k, s in series.items()}
+    last = {k: s["buckets"][-1]["loss"] for k, s in series.items()}
+    print("\n  Improvement from the first bucket to the last:")
+    for k in series:
+        print(f"    {k:<18} {first[k] - last[k]:+.4f}")
+
+    results["q17"] = {
+        "buckets": {k: s["buckets"] for k, s in series.items()},
+        "per_position": {k: s["per_position"] for k, s in series.items()},
+        "n_windows": series["NoPE"]["n_windows"],
+        "figure": os.path.basename(png),
+    }
+    return results["q17"]
+
+
+def plot_q17(args, series):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for colour, (label, s) in zip(("tab:blue", "tab:red"), series.items()):
+        centres = [(b["start"] + b["end"]) / 2 for b in s["buckets"]]
+        ax.plot(centres, [b["loss"] for b in s["buckets"]], "-o", color=colour,
+                label=label, markersize=4)
+    ax.set_xlabel("Position in the context window")
+    ax.set_ylabel("Mean validation loss")
+    ax.set_title("Validation loss by position")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    png = os.path.join(args.out_dir, "task4_q17_position.png")
+    fig.savefig(png, dpi=150)
+    plt.close(fig)
+    return png
+
+
+# ---------------------------------------------------------------------------
+# §7.4 - the final model
+# ---------------------------------------------------------------------------
+
+def run_final_model(args, corpus, device, results):
+    """§7.4: the best configuration for roughly four times the standard step
+    count, cosine period set to the full run. Task 5 evaluates this one."""
+    print("\n" + "=" * 70)
+    print("Section 7.4: final model")
+    print("=" * 70)
+
+    best_lr, _ = resolve_best_lr(args, results)
+    steps = args.final_steps or 4 * STANDARD_RUN["num_steps"]
+    exp = Experiment(name="final_model", phase="final_model", lr=best_lr,
+                     run_overrides={"num_steps": steps},
+                     note=f"section 7.4: {steps} steps, cosine period matched")
+    record = ensure_run(args, exp, corpus, device)
+
+    print(f"\n[§7.4] final model: {record['completed_steps']} steps, "
+          f"val {record['final_val_loss']:.4f}")
+    print(f"  checkpoint: {record['checkpoint']}  (Task 5 evaluates this)")
+    results["final_model"] = record
+    return record
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def save_results(results, log_dir):
+    path = os.path.join(log_dir, "task4_results.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    prior = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            prior = json.load(f)
+    prior.update(results)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(prior, f, indent=2, default=str)
+    return path
+
+
+def describe_machine(device):
+    info = {"platform": platform.platform(), "python": platform.python_version(),
+            "torch": torch.__version__, "device": str(device)}
+    if device.type == "cuda":
+        info["gpu"] = torch.cuda.get_device_name(device)
+        info["bf16_supported"] = torch.cuda.is_bf16_supported()
+    return info
+
+
+def print_plan(args, results):
+    """What a full run would train, and roughly what it costs."""
     try:
-        rmsnorm_baseline_df = pd.read_csv(os.path.join(log_dir, 'rmsnorm_baseline.csv'))
-        rmsnorm_ablation_df = pd.read_csv(os.path.join(log_dir, 'rmsnorm_ablation.csv'))
-        rmsnorm_gap = rmsnorm_ablation_df['val_loss'].iloc[-1] - rmsnorm_baseline_df['val_loss'].iloc[-1]
-    except FileNotFoundError:
-        rmsnorm_gap = 'N/A'
+        best_lr, source = resolve_best_lr(args, results)
+    except SystemExit:
+        best_lr, source = float("nan"), "not yet known (run Q10 first)"
 
-    # --- RoPE Ablation ---
-    try:
-        rope_baseline_df = pd.read_csv(os.path.join(log_dir, 'rope_baseline.csv'))
-        rope_ablation_df = pd.read_csv(os.path.join(log_dir, 'rope_ablation.csv'))
-        rope_gap = rope_ablation_df['val_loss'].iloc[-1] - rope_baseline_df['val_loss'].iloc[-1]
-    except FileNotFoundError:
-        rope_gap = 'N/A'
+    planned = sweep_experiments(args) + [baseline_experiment(best_lr)] + \
+        ablation_experiments(best_lr, reduced_lr(args, best_lr))
+    total_steps = sum(e.run_kwargs()["num_steps"] for e in planned)
 
-    # --- SwiGLU/ReLU Ablation ---
-    try:
-        swiglu_baseline_df = pd.read_csv(os.path.join(log_dir, 'swiglu_baseline.csv'))
-        relu_ablation_df = pd.read_csv(os.path.join(log_dir, 'relu_ablation.csv'))
-        swiglu_gap = relu_ablation_df['val_loss'].iloc[-1] - swiglu_baseline_df['val_loss'].iloc[-1]
-    except FileNotFoundError:
-        swiglu_gap = 'N/A'
-
-    print("\n--- Performance Gaps ---")
-    print(f"{'Experiment':<25} | {'Validation Loss Gap':<25}")
-    print("-" * 50)
-    if isinstance(lr_gap, float):
-        print(f"{'Learning Rate (second best)':<25} | {lr_gap:<25.4f}")
-    else:
-        print(f"{'Learning Rate (second best)':<25} | {'N/A'}")
-    if isinstance(rmsnorm_gap, float):
-        print(f"{'RMSNorm Ablation':<25} | {rmsnorm_gap:<25.4f}")
-    else:
-        print(f"{'RMSNorm Ablation':<25} | {'N/A'}")
-    if isinstance(rope_gap, float):
-        print(f"{'RoPE Ablation':<25} | {rope_gap:<25.4f}")
-    else:
-        print(f"{'RoPE Ablation':<25} | {'N/A'}")
-    if isinstance(swiglu_gap, float):
-        print(f"{'SwiGLU/ReLU Ablation':<25} | {swiglu_gap:<25.4f}")
-    else:
-        print(f"{'SwiGLU/ReLU Ablation':<25} | {'N/A'}")
-    print("-" * 50)
-
-def run_q15(args):
-    """
-    Compares models with two different vocabulary sizes.
-    """
-    print("--- Running Q15: Vocabulary Size Comparison ---")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
-
-    # --- Baseline Model (vocab size 4000) ---
-    print("\n--- Training baseline model (vocab size 4000) ---")
-    model_baseline, tokenizer_baseline, _ = get_model_and_tokenizer(vocab_size=4000)
-    model_baseline.to(device)
-
-    # Load and tokenize data
-    train_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-train.txt')
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    with open(train_data_path, 'r', encoding='utf-8') as f:
-        train_text = f.read()
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
-    train_ids_baseline = tokenizer_baseline.encode(train_text)
-    val_ids_baseline = tokenizer_baseline.encode(val_text)
-
-    train_args = vars(args).copy()
-    train_args.pop('questions')
-    train_args['run_name'] = 'vocab_4000_baseline'
-    
-    train(
-        model_baseline,
-        np.array(train_ids_baseline),
-        np.array(val_ids_baseline),
-        **train_args
-    )
-
-    # --- Ablation Model (vocab size 1000) ---
-    print("\n--- Training ablation model (vocab size 1000) ---")
-    model_ablation, tokenizer_ablation, _ = get_model_and_tokenizer(vocab_size=1000)
-    model_ablation.to(device)
-
-    train_ids_ablation = tokenizer_ablation.encode(train_text)
-    val_ids_ablation = tokenizer_ablation.encode(val_text)
-
-    train_args['run_name'] = 'vocab_1000_ablation'
-
-    train(
-        model_ablation,
-        np.array(train_ids_ablation),
-        np.array(val_ids_ablation),
-        **train_args
-    )
-
-    # --- Evaluation ---
-    print("\n--- Evaluating baseline model (vocab size 4000) ---")
-    avg_loss_baseline, perplexity_baseline, bpc_baseline = evaluate(
-        model_baseline,
-        val_ids_baseline,
-        batch_size=args.batch_size,
-        context_length=model_baseline.config.context_length,
-        device=device,
-        total_chars=len(val_text)
-    )
-
-    print("\n--- Evaluating ablation model (vocab size 1000) ---")
-    avg_loss_ablation, perplexity_ablation, bpc_ablation = evaluate(
-        model_ablation,
-        val_ids_ablation,
-        batch_size=args.batch_size,
-        context_length=model_ablation.config.context_length,
-        device=device,
-        total_chars=len(val_text)
-    )
-
-    print("\n--- Vocabulary Size Comparison ---")
-    print(f"{'Metric':<20} | {'Vocab Size 4000':<20} | {'Vocab Size 1000':<20}")
-    print("-" * 66)
-    print(f"{'Perplexity':<20} | {perplexity_baseline:<20.4f} | {perplexity_ablation:<20.4f}")
-    print(f"{'BPC':<20} | {bpc_baseline:<20.4f} | {bpc_ablation:<20.4f}")
-    print(f"{'Total Parameters':<20} | {model_baseline.num_parameters():<20} | {model_ablation.num_parameters():<20}")
-    print("-" * 66)
-
-def run_q16(args):
-    """
-    Reports the GPU-hours used.
-    """
-    print("--- Running Q16: GPU-Hours Report ---")
-
-    log_dir = args.log_dir
-    total_wall_time = 0
-    
-    for log_file in os.listdir(log_dir):
-        if log_file.endswith('.csv'):
-            try:
-                df = pd.read_csv(os.path.join(log_dir, log_file))
-                if 'wall_time' in df.columns and not df.empty:
-                    total_wall_time += df['wall_time'].iloc[-1]
-            except pd.errors.EmptyDataError:
-                print(f"Log file is empty: {log_file}")
+    print(f"Best learning rate: {source}")
+    print(f"\n  {'run':<32} {'phase':<12} {'steps':>7} {'lr':>9}  cached")
+    for e in planned:
+        cached = "yes" if load_run(args, e.name) else "no"
+        lr = "TBD" if math.isnan(e.lr) else f"{e.lr:.0e}"
+        print(f"  {e.name:<32} {e.phase:<12} {e.run_kwargs()['num_steps']:>7} "
+              f"{lr:>9}  {cached}")
+    print(f"\n  {total_steps:,} steps total for Q10-Q14 and Q17 "
+          f"(plus section 7.4's final model at "
+          f"{args.final_steps or 4 * STANDARD_RUN['num_steps']:,}).")
+    print("  At ~0.1 s/step on an A100 that is roughly "
+          f"{total_steps * 0.1 / 3600:.1f} GPU-hours; measure your own step time "
+          "with Task 3's Q8 and scale.")
 
 
-    gpu_hours = total_wall_time / 3600
-    
-    print(f"\n--- Total GPU-Hours Used ---")
-    print(f"Total Wall Time: {total_wall_time:.2f} seconds")
-    print(f"Total GPU-Hours: {gpu_hours:.4f} hours")
+def apply_smoke_settings(args):
+    """Tiny everything, into logs/smoke/, so the pipeline can be checked first."""
+    BASE_CONFIG.update(context_length=64, n_layers=2, d_model=128, n_heads=4, d_ff=128)
+    STANDARD_RUN.update(batch_size=8, num_steps=30, warmup_steps=5, eval_every=10,
+                        save_every=0)
+    args.sweep_steps = 20
+    args.sweep_lrs = [1e-4, 1e-2, 1.0]     # 1.0 is there to make something diverge
+    args.eval_windows = 20
+    args.final_steps = 40
+    args.position_buckets = 4
+    args.second_vocab_size = BASE_CONFIG["vocab_size"]   # no second corpus in smoke
+    args.log_dir = os.path.join(args.log_dir, "smoke")
+    args.checkpoint_dir = os.path.join(args.checkpoint_dir, "smoke")
+    args.out_dir = os.path.join(REPO_ROOT, "logs", "smoke")
+    print("SMOKE RUN - tiny model on synthetic data, into logs/smoke/. "
+          "Not a Q10-Q17 answer.\n")
 
-def run_q17(args):
-    """
-    Generates a position-wise validation loss plot.
-    """
-    print("--- Running Q17: Position-wise Validation Loss Plot ---")
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
+def build_parser():
+    p = argparse.ArgumentParser(
+        description="Task 4: experiments. Answers Q10-Q17 (section 7.5).")
+    p.add_argument("--questions", nargs="+", type=int,
+                   default=[10, 11, 12, 13, 14, 15, 16, 17],
+                   choices=[10, 11, 12, 13, 14, 15, 16, 17])
+    p.add_argument("--final_model", action="store_true",
+                   help="Also train section 7.4's final model (4x the standard steps).")
+    p.add_argument("--plan", action="store_true",
+                   help="Print what would be trained and roughly what it costs, "
+                        "then stop.")
+    p.add_argument("--force", action="store_true",
+                   help="Retrain runs that are already cached.")
+    p.add_argument("--smoke", action="store_true",
+                   help="Tiny model on synthetic data, into logs/smoke/.")
+    # §7.1
+    p.add_argument("--sweep_lrs", nargs="+", type=float, default=SWEEP_LRS)
+    p.add_argument("--sweep_steps", type=int, default=1000,
+                   help="Reduced step count for the sweep; the cosine period "
+                        "follows it (section 7.1).")
+    p.add_argument("--best_lr", type=float, default=None,
+                   help="Skip Q10 and use this learning rate as the baseline's.")
+    p.add_argument("--reduced_lr", type=float, default=None,
+                   help="The lower learning rate for section 7.2's no-RMSNorm "
+                        "second run. Defaults to best_lr / --reduced_lr_factor.")
+    p.add_argument("--reduced_lr_factor", type=float, default=3.0,
+                   help="How far below the best learning rate the reduced run "
+                        "sits when --reduced_lr is not given.")
+    p.add_argument("--final_steps", type=int, default=None,
+                   help="Section 7.4's run length. Defaults to 4x the standard run.")
+    # evaluation
+    p.add_argument("--eval_batch_size", type=int, default=32)
+    p.add_argument("--eval_windows", type=int, default=None,
+                   help="Cap on validation windows scored, for a quicker estimate.")
+    p.add_argument("--position_buckets", type=int, default=8)
+    p.add_argument("--second_vocab_size", type=int, default=1000,
+                   help="Section 7.3's comparison tokenizer.")
+    p.add_argument("--dev_hours", type=float, default=0.0,
+                   help="Development and debugging hours for Q16; not in the logs.")
+    # plumbing
+    p.add_argument("--data_dir", default=REPO_ROOT)
+    p.add_argument("--log_dir", default=os.path.join(REPO_ROOT, "logs"))
+    p.add_argument("--checkpoint_dir", default=os.path.join(REPO_ROOT, "checkpoints"))
+    p.add_argument("--out_dir", default=REPO_ROOT)
+    p.add_argument("--device", default=None)
+    p.add_argument("--no_amp", action="store_true")
+    return p
 
-    # --- RoPE Model ---
-    print("\n--- Evaluating RoPE model ---")
-    model_rope, tokenizer, config = get_model_and_tokenizer(use_rope=True)
-    model_rope.to(device)
 
-    # Load validation data
-    val_data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'TinyStoriesV2-GPT4-valid.txt')
-    with open(val_data_path, 'r', encoding='utf-8') as f:
-        val_text = f.read()
-    val_ids = tokenizer.encode(val_text)
-    
-    rope_losses = evaluate_by_position(
-        model_rope,
-        val_ids,
-        batch_size=args.batch_size,
-        context_length=config.context_length,
-        device=device
-    )
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    device = torch.device(args.device) if args.device else torch.device(
+        "cuda" if torch.cuda.is_available() else "cpu")
 
-    # --- NoPE Model ---
-    print("\n--- Evaluating NoPE model ---")
-    model_nope, _, _ = get_model_and_tokenizer(use_rope=False)
-    model_nope.to(device)
+    if args.smoke:
+        apply_smoke_settings(args)
+    os.makedirs(args.log_dir, exist_ok=True)
+    os.makedirs(args.out_dir, exist_ok=True)
 
-    nope_losses = evaluate_by_position(
-        model_nope,
-        val_ids,
-        batch_size=args.batch_size,
-        context_length=config.context_length,
-        device=device
-    )
+    results = {}
+    existing = os.path.join(args.log_dir, "task4_results.json")
+    if os.path.exists(existing):
+        with open(existing, encoding="utf-8") as f:
+            results.update(json.load(f))
 
-    # --- Plotting ---
-    plt.figure(figsize=(10, 6))
-    plt.plot(rope_losses, label='RoPE')
-    plt.plot(nope_losses, label='NoPE')
-    plt.xlabel('Position in Context Window')
-    plt.ylabel('Validation Loss')
-    plt.title('Position-wise Validation Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('position_wise_loss.png')
-    print("\nPlot saved to position_wise_loss.png")
+    if args.plan:
+        print_plan(args, results)
+        return
 
-def main():
-    parser = argparse.ArgumentParser(description="Run experiments for Task 4 questions.")
-    parser.add_argument('--questions', nargs='+', type=int, default=[10],
-                        help='A list of questions to run (10-17).')
-    parser.add_argument('--steps', type=int, default=1000, help='Number of training steps.')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training.')
-    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate.')
-    parser.add_argument('--warmup_steps', type=int, default=200, help='Number of warmup steps.')
-    parser.add_argument('--weight_decay', type=float, default=0.1, help='Weight decay.')
-    parser.add_argument('--grad_clip', type=float, default=1.0, help='Gradient clipping.')
-    parser.add_argument('--eval_every', type=int, default=50, help='Evaluate every N steps.')
-    parser.add_argument('--save_every', type=int, default=1000, help='Save checkpoint every N steps.')
-    parser.add_argument('--log_dir', type=str, default='logs', help='Log directory.')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Checkpoint directory.')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-    parser.add_argument('--resume_from', type=str, default=None, help='Resume from checkpoint.')
-    parser.add_argument('--use_amp', action='store_true', default=True)
-    parser.add_argument('--no_amp', dest='use_amp', action='store_false')
-    
-    args = parser.parse_args()
-    
-    if 10 in args.questions:
-        run_q10(args)
-    if 11 in args.questions:
-        run_q11(args)
-    if 12 in args.questions:
-        run_q12(args)
-    if 13 in args.questions:
-        run_q13(args)
-    if 14 in args.questions:
-        run_q14(args)
-    if 15 in args.questions:
-        run_q15(args)
-    if 16 in args.questions:
-        run_q16(args)
-    if 17 in args.questions:
-        run_q17(args)
+    corpus = load_corpus(args, BASE_CONFIG["vocab_size"])
+    print(f"Device: {device}")
+    print(f"Data:   {corpus['source']} "
+          f"({len(corpus['train']):,} train / {len(corpus['valid']):,} val tokens)")
+
+    results["machine"] = describe_machine(device)
+    results["base_config"] = dict(BASE_CONFIG)
+    results["standard_run"] = dict(STANDARD_RUN)
+
+    handlers = {10: run_q10, 11: run_q11, 12: run_q12, 13: run_q13,
+                14: run_q14, 15: run_q15, 16: run_q16, 17: run_q17}
+    for q in sorted(args.questions):
+        handlers[q](args, corpus, device, results)
+
+    if args.final_model:
+        run_final_model(args, corpus, device, results)
+
+    path = save_results(results, args.log_dir)
+    print("\n" + "=" * 70)
+    print("TASK 4 COMPLETE")
+    print("=" * 70)
+    print(f"All numbers written to {path}")
 
 
 if __name__ == "__main__":
