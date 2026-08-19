@@ -1,20 +1,18 @@
 """Task 2 end to end: model and inference, answering Q5-Q7 (§4.4).
 
-None of these three questions needs a trained model. Parameter counts are a
-property of the architecture, KV-cache correctness is an identity that must hold
-for any weights, and throughput is dominated by the shape of the computation
-rather than its values - so this runs on a freshly initialised model and needs
-no GPU time. That is stated in the results file so the report can say it too.
-
-  * Q5 - parameter counts, split into embedding / LM head / non-embedding, for
+  * Q5 - parameter counts split into embedding / LM head / non-embedding, for
          the SwiGLU model and the §7.2 parameter-matched ReLU variant.
-  * Q6 - evidence the KV cache is correct: greedy cached and uncached
-         generations must be identical over a 100-token continuation (§4.2),
-         and the per-step logits must agree to floating-point tolerance.
+  * Q6 - evidence the KV cache is correct: cached and uncached greedy
+         generations identical over 100 tokens (§4.2), logits agreeing to
+         floating-point tolerance.
   * Q7 - generation throughput with and without the cache, 16 to 256 tokens.
 
-Every number printed is also written to logs/task2_results.json, so nothing in
-the report has to be transcribed from a terminal.
+None of the three needs trained weights or GPU time: parameter counts follow
+from the architecture, cache correctness is an identity that holds for any
+weights, and throughput follows the shape of the computation rather than its
+values. The results file records that, so the report can state it.
+
+Every number printed also lands in logs/task2_results.json.
 
 Examples
 --------
@@ -31,8 +29,7 @@ import time
 import torch
 
 import matplotlib
-matplotlib.use("Agg")   # headless: this script only saves PNGs, and plt.show()
-                        # with no display blocks.
+matplotlib.use("Agg")   # headless: this script only saves a PNG
 import matplotlib.pyplot as plt
 
 from src.model import TransformerLM, TransformerConfig
@@ -46,9 +43,8 @@ SPECIAL_TOKENS = ["<|endoftext|>"]
 BASE_CONFIG = dict(vocab_size=4000, context_length=256, n_layers=4, d_model=512,
                    n_heads=8, d_ff=1344, rope_theta=10000.0, use_qk_norm=True)
 
-# §7.2: "set d_ff = 4 * d_model = 2048 so the parameter counts match to within
-# 2% (three matrices at 1344 versus two at 2048)". d_ff is used as given, so
-# this is the whole of the difference between the two variants.
+# §7.2's ReLU variant: two matrices at 2048 against SwiGLU's three at 1344,
+# which matches the parameter count to within 2%. d_ff is the only difference.
 RELU_D_FF = 2048
 
 
@@ -69,10 +65,9 @@ def describe_machine():
 def load_tokenizer(repo_root):
     """The Task 1 tokenizer if it has been built, else a byte-level fallback.
 
-    The fallback exists so Q6 and Q7 can run before Task 1 has been completed;
-    which one was used is recorded in the results, because it changes the
-    vocabulary size and therefore the Q7 numbers (the LM head is the widest
-    matrix in a decode step).
+    The fallback lets Q6 and Q7 run before Task 1 is finished. Which one was
+    used is recorded, since the vocabulary size moves the Q7 numbers (the LM
+    head is the widest matrix in a decode step).
     """
     vocab_path = os.path.join(repo_root, "vocab.pkl")
     merges_path = os.path.join(repo_root, "merges.pkl")
@@ -94,7 +89,7 @@ def build_model(tokenizer, device, **overrides):
     cfg = dict(BASE_CONFIG)
     cfg["vocab_size"] = len(tokenizer.vocab)
     cfg.update(overrides)
-    torch.manual_seed(0)         # the same initialisation every run
+    torch.manual_seed(0)         # same initialisation every run
     model = TransformerLM(TransformerConfig(**cfg)).to(device)
     model.eval()
     return model
@@ -113,26 +108,21 @@ def parameter_breakdown(model):
 
 
 def tokens_actually_generated(n_prompt_tokens, max_new_tokens, context_length, use_cache):
-    """How many tokens `generate` really produces - which is not `max_new_tokens`.
+    """How many tokens `generate` really produces, which is not `max_new_tokens`.
 
-    The cached path decodes into a fixed-size buffer of `context_length` and, as
-    §4.2 permits, stops on reaching it rather than overflowing; the uncached path
-    has no such limit because it re-slices a sliding window every step. So at
-    max_new_tokens=256 with a 4-token prompt and context_length=256 the cached
-    path produces 253 tokens and the uncached path 256.
-
-    Dividing both by `max_new_tokens` would therefore compare two different
-    amounts of work and understate cached throughput. This returns the exact
-    count instead; `tests/test_task2_questions.py` checks it against a
-    byte-level tokenizer, whose decode/encode round-trip is exact.
+    The cached path stops on filling its fixed-size context_length buffer (§4.2);
+    the uncached path slides a window and has no such limit. At
+    max_new_tokens=256 with a 4-token prompt that is 253 tokens against 256, so
+    dividing both by max_new_tokens would compare different amounts of work and
+    understate cached throughput. tests/test_task2_questions.py checks this
+    count against real generation.
 
     Assumes generation is not cut short by <|endoftext|>; the caller checks that.
     """
     if not use_cache:
         return max_new_tokens
-    # The prompt is truncated to the last context_length tokens by generate();
-    # prefill leaves that many slots filled, and the prefill's own last-position
-    # logits yield one token without consuming a further slot - hence the +1.
+    # Prefill fills one slot per prompt token, and its last-position logits give
+    # one more token without consuming a slot - hence the +1.
     prompt_in_cache = min(n_prompt_tokens, context_length)
     return min(max_new_tokens, context_length - prompt_in_cache + 1)
 
@@ -142,7 +132,7 @@ def save_results(results, out_dir):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     prior = {}
     if os.path.exists(path):
-        # Running a single question (--questions 7) must not discard the others.
+        # Running one question (--questions 7) must not discard the others.
         with open(path, encoding="utf-8") as f:
             prior = json.load(f)
     prior.update(results)
@@ -183,9 +173,8 @@ def run_q5(tokenizer, device):
     print("\nNote: SwiGLU uses three d_model x d_ff matrices, ReLU two, which is")
     print("why the two variants use different d_ff to reach the same size.")
 
-    # §4.1 says the model is 'roughly 17M parameters excluding the embedding and
-    # LM head'. It is not - that figure is the total *including* them at
-    # vocab_size=4000. Report the measured split rather than the quoted one.
+    # §4.1's "roughly 17M excluding the embedding and LM head" is really the
+    # total *including* them at vocab_size=4000, so report the measured split.
     print(f"\nFor the report: non-embedding is {swiglu_params['non_embedding'] / 1e6:.2f}M, "
           f"total {swiglu_params['total'] / 1e6:.2f}M at vocab_size="
           f"{len(tokenizer.vocab)}.")
@@ -223,9 +212,9 @@ def greedy_logits_uncached(model, token_ids, n_steps, device):
 def greedy_logits_cached(model, token_ids, forced_ids, device):
     """Replay `forced_ids` through the cached path, recording each step's logits.
 
-    Driven by the token sequence the uncached path produced, so both sides see
-    identical inputs at every step and any difference is the cache's fault
-    rather than a diverging sequence.
+    Driven by the sequence the uncached path produced, so both sides see the
+    same inputs at every step and any difference is the cache's doing rather
+    than a diverging sequence.
     """
     for layer in model.layers:
         layer.attn.reset_cache()
@@ -310,8 +299,8 @@ def run_q7(tokenizer, device, prompt, out_dir, token_counts, repeats):
     context_length = model.config.context_length
     n_prompt_tokens = len(tokenizer.encode(prompt))
 
-    # Warm up both paths: the first forward pass pays for lazy allocation and
-    # kernel selection, which would otherwise land entirely on the 16-token point.
+    # Warm up both paths, so lazy allocation and kernel selection do not land
+    # entirely on the 16-token point.
     for use_cache in (True, False):
         generate(model, tokenizer, prompt, max_new_tokens=8,
                  temperature=0.0, use_cache=use_cache)

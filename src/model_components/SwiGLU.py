@@ -23,16 +23,15 @@ class SwiGLU(nn.Module):
         returns:
             tensor of shape (..., d_model)
         """
-        # SiLU(W1 x) is the gate; it multiplies W3 x element-wise; W2 projects back down.
+        # SiLU(W1 x) gates W3 x element-wise; W2 projects back to d_model.
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 def compute_d_ff(d_model, multiple_of=64):
-    """Round (8/3) * d_model to the NEAREST multiple of `multiple_of`.
+    """Round (8/3) * d_model to the nearest multiple of `multiple_of`.
 
-    (Not ceiling: rounding up gives 1408 for d_model=512, but the
-    assignment's reference value is 1344 = round(1365.33 / 64) * 64,
-    i.e. nearest, not up.)
+    Nearest, not up: rounding up gives 1408 at d_model=512, where §4.1's
+    reference value is 1344.
     """
     d_ff = 8 * d_model / 3
     return multiple_of * round(d_ff / multiple_of)
@@ -40,19 +39,15 @@ def compute_d_ff(d_model, multiple_of=64):
 
 def relu_ffn_hidden_dim(d_ff_swiglu):
     """
-    Hidden dim for a 2-matrix ReLU FFN that matches a 3-matrix SwiGLU FFN's
-    parameter count EXACTLY, at the same d_model.
-
-    SwiGLU has 3 (d_model x d_ff) matrices -> 3 * d_model * d_ff params.
-    A plain ReLU FFN has 2 -> 2 * d_model * d_ff_relu params.
-    Equal params requires d_ff_relu = 1.5 * d_ff_swiglu exactly.
+    Hidden dim for a 2-matrix ReLU FFN whose parameter count matches a 3-matrix
+    SwiGLU FFN at the same d_model: 3 * d_model * d_ff == 2 * d_model * d_ff_relu
+    requires d_ff_relu = 1.5 * d_ff_swiglu.
     """
     return round(1.5 * d_ff_swiglu)
 
 
 class ReLUFFN(nn.Module):
-    """Plain (non-gated) ReLU feed-forward, FFN(x) = W2 ReLU(W1 x).
-    """
+    """Plain (non-gated) ReLU feed-forward, FFN(x) = W2 ReLU(W1 x)."""
     def __init__(self, d_model, d_ff):
         super().__init__()
         self.w1 = nn.Linear(d_model, d_ff, bias=False)

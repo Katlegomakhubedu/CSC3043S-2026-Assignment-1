@@ -6,15 +6,12 @@ from collections import Counter, defaultdict
 from typing import Iterator
 import pickle
 
-# GPT-2 pre-tokenizer regex (Appendix A). Compiled once at import: the corpus
-# is streamed past it billions of characters at a time, so per-call compilation
-# lookups are pure overhead.
+# GPT-2 pre-tokenizer regex (Appendix A), compiled once at import.
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 _PAT = regex.compile(PAT)
 
-# Shared single-byte objects. `bytes([b])` allocates a fresh object on every
-# call; the corpus has billions of byte positions, so pre-token tuples are built
-# out of these 256 interned objects instead.
+# Interned single-byte objects, so pre-token tuples reuse them instead of
+# allocating a fresh bytes object per byte position.
 _BYTE = [bytes([i]) for i in range(256)]
 
 
@@ -24,17 +21,14 @@ def _to_byte_tuple(text: str) -> tuple[bytes, ...]:
 
 
 def get_pretokens(documents) -> Iterator[tuple[bytes, ...]]:
-    """Yield one byte-tuple per pre-token *occurrence*, using the GPT-2 regex.
+    """Yield one byte-tuple per pre-token occurrence, using the GPT-2 regex.
 
-    This is a generator, not a list. The full training corpus contains billions
-    of pre-token occurrences but only ~10^4-10^5 distinct ones, so materialising
-    the occurrence list (as this previously did) cost tens of GB of RAM to
-    produce a frequency table that fits in a few MB. Feed this straight into
-    `count_pretokens`, or prefer `count_pretokens_from_documents`, which avoids
-    building a tuple per occurrence at all.
+    A generator, not a list: the corpus has billions of occurrences but only
+    ~10^4-10^5 distinct pre-tokens, so the occurrence list is never
+    materialised. Prefer `count_pretokens_from_documents`, which skips building
+    a tuple per occurrence altogether.
     """
     for doc in documents:
-        # Skip empty documents
         if not doc:
             continue
         for match in _PAT.finditer(doc):
@@ -44,11 +38,9 @@ def get_pretokens(documents) -> Iterator[tuple[bytes, ...]]:
 def count_pretokens_from_documents(documents) -> dict[tuple[bytes, ...], int]:
     """Pre-token frequency table for a stream of documents.
 
-    Counts on the matched *strings* first - which are cheap to hash and are
-    shared by every repeat occurrence - and only converts the distinct keys to
-    byte tuples at the end. On a 20MB slice that is ~4.8M occurrences collapsing
-    to ~13k distinct pre-tokens, so this does ~370x less tuple construction than
-    counting `get_pretokens` occurrence-by-occurrence, for an identical result.
+    Counts the matched strings first and converts only the distinct keys to byte
+    tuples, which does far less tuple construction than counting occurrence by
+    occurrence, for an identical result.
     """
     str_counts = Counter()
     for doc in documents:
@@ -61,21 +53,15 @@ def count_pretokens_from_documents(documents) -> dict[tuple[bytes, ...], int]:
 def iter_document_pieces(input_path: str, special_tokens: list[str],
                          chunk_size: int = 1 << 22,
                          flush_threshold: int | None = None) -> Iterator[tuple[str, bool]]:
-    """Stream `input_path`, yielding `(text, ends_document)` with special tokens
-    removed.
+    """Stream `input_path`, yielding `(text, ends_document)` with special tokens removed.
 
-    Reads in chunks rather than pulling the whole file into memory (the training
-    split is ~2.2GB, against ~12GB of Colab RAM that the merge bookkeeping also
-    needs). Special tokens are hard boundaries (§3.1), so chunks are normally
-    only cut at a delimiter match: a delimiter straddling a read boundary stays
-    in the buffer until the rest of it arrives.
+    Reads in chunks so a 2.2GB corpus never lands in memory at once. Special
+    tokens are hard boundaries (§3.1), so chunks are normally cut only at a
+    delimiter; one straddling a read boundary waits in the buffer for the rest.
 
-    `ends_document` is False only for the memory safety valve below, which cuts
-    an over-long delimiter-free stretch at a whitespace boundary. Such a piece
-    continues in the next yield. Callers that merely count pre-tokens can ignore
-    the flag (a whitespace cut splits no pre-token); callers that insert a
-    document delimiter must not insert one after a piece with `ends_document`
-    False, or they would plant an <|endoftext|> in the middle of a document.
+    `ends_document` is False only for the safety valve below, which cuts an
+    over-long delimiter-free stretch at whitespace. That piece continues in the
+    next yield, so callers must not emit an <|endoftext|> after it.
     """
     if special_tokens:
         # Longest-first, so a special token that is a prefix of another can't
@@ -87,15 +73,13 @@ def iter_document_pieces(input_path: str, special_tokens: list[str],
         pattern = None
         max_special = 0
 
-    # If a file goes a long way with no delimiter, the buffer would grow without
-    # bound. Past this point flush it at a whitespace boundary instead, which
-    # the pre-tokenizer regex never splits across. Exposed as a parameter purely
-    # so tests can drive this path on a small file.
+    # Without a delimiter the buffer would grow without bound; past this point
+    # flush at whitespace instead, which the regex never splits across. A
+    # parameter so tests can reach this path on a small file.
     if flush_threshold is None:
         flush_threshold = max(chunk_size * 4, 1 << 20)
 
-    # newline="": read the file's actual characters, never Python's
-    # universal-newline translation of them (see read_txt).
+    # newline="": no universal-newline translation (see read_txt).
     with open(input_path, "r", encoding="utf-8", newline="") as f:
         buffer = ""
         while True:
@@ -107,9 +91,8 @@ def iter_document_pieces(input_path: str, special_tokens: list[str],
             if pattern is not None:
                 last = 0
                 for m in pattern.finditer(buffer):
-                    # A delimiter follows, so this piece really is a whole
-                    # document (an empty one, between adjacent delimiters, is
-                    # dropped rather than yielded).
+                    # A delimiter follows, so this piece is a whole document.
+                    # Empty ones (adjacent delimiters) are dropped.
                     if m.start() > last:
                         yield buffer[last:m.start()], True
                     last = m.end()
@@ -169,12 +152,9 @@ def merge_pair(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> tuple[byte
     return tuple(merged_word)
 
 def read_txt(input_path: str) -> str:
-    # newline="" disables universal-newline translation. Without it Python's text
-    # mode silently rewrites CRLF to LF on Windows, which would (a) make the
-    # serial reader disagree with the binary-reading parallel one, (b) make the
-    # learned merges platform-dependent, and (c) break the §3.1 guarantee that
-    # decode(encode(s)) == s, since the decoded text could never reproduce the
-    # CRLF the file actually contains.
+    # newline="" disables universal-newline translation. Without it Windows text
+    # mode rewrites CRLF to LF, which would make the merges platform-dependent
+    # and break the §3.1 guarantee that decode(encode(s)) == s.
     with open(input_path, "r", encoding="utf-8", newline="") as file:
         return file.read()
 
@@ -188,7 +168,7 @@ def split_text(raw_text: str, special_tokens: list[str]) -> list[str]:
         documents = [raw_text]
 
     return documents
-    
+
 def init_vocab(special_tokens: list[str]) -> dict[int, bytes]:
     """Byte-level vocabulary: special tokens first, then all 256 byte values."""
     vocab = {}
@@ -220,19 +200,17 @@ def _build_pair_index(words: list[tuple[bytes, ...]], freqs: list[int]):
 def train_bpe_incremental(word_freq: dict[tuple[bytes, ...], int], vocab: dict[int, bytes],
                            num_merges: int, track_token_counts: bool = False):
     """
-    Learn up to `num_merges` BPE merges, updating pair counts incrementally rather
-    than recounting the whole corpus after every merge (required by §3.2).
+    Learn up to `num_merges` BPE merges, updating pair counts incrementally
+    instead of recounting the corpus after every merge (§3.2).
 
-    After each merge, only the pre-tokens that actually contained the merged pair
-    (tracked via `pair_to_words`) have their pair-count contributions removed and
-    re-added - every other pre-token is untouched. This is what makes training
-    scale to the full corpus instead of being O(merges * corpus_size).
+    After a merge, only the pre-tokens that contained the merged pair (tracked in
+    `pair_to_words`) have their contributions removed and re-added, which keeps
+    training off the O(merges * corpus_size) path.
 
-    Mutates `vocab` in place (adds one entry per merge) and returns
-    (merges, token_counts). `token_counts` is None unless track_token_counts=True,
-    in which case it's a list of the corpus's total token count after each merge
-    (starting with the pre-merge count at index 0) - free to compute because every
-    merge reduces the token count by exactly the merged pair's occurrence count.
+    Mutates `vocab` in place and returns (merges, token_counts). `token_counts`
+    is None unless track_token_counts=True, in which case it holds the corpus
+    token count after each merge (index 0 = before any merge). It is free to
+    track, since each merge reduces the count by exactly the merged pair's count.
     """
     words = list(word_freq.keys())
     freqs = list(word_freq.values())
@@ -291,19 +269,16 @@ def train_bpe_incremental(word_freq: dict[tuple[bytes, ...], int], vocab: dict[i
 
 def get_word_freq_from_files(input_paths: list[str], special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
     """
-    Pre-tokenize one or more files and return their combined pre-token frequency
-    table. Each file is streamed a chunk at a time (`iter_documents`) and counted
-    on the fly, so peak memory is set by the number of *distinct* pre-tokens
-    (~10^5, a few MB) rather than by the corpus size - the whole point of §3.2's
-    "well under an hour, within ~12GB" target.
+    Pre-tokenize one or more files into a combined pre-token frequency table.
 
-    Files are counted one at a time and their counts merged, rather than
-    concatenating the raw text first - e.g. TinyStories' train split ships as two
-    ~1.1GB part files that together form one corpus. (A pre-token straddling
-    exactly the boundary between two files would be mis-split into two
-    pre-tokens; with millions of documents in the corpus and at most
-    `len(input_paths) - 1` such boundaries, the effect on merge statistics is
-    negligible.)
+    Each file is streamed and counted on the fly, so peak memory follows the
+    number of *distinct* pre-tokens (~10^5, a few MB) rather than the corpus
+    size - what §3.2's "well under an hour, within ~12GB" target needs.
+
+    Files are counted separately and their counts merged, since the train split
+    ships as two part files forming one corpus. A pre-token straddling a file
+    boundary would be mis-split, but there are at most len(input_paths) - 1 such
+    boundaries against millions of documents.
     """
     word_freq = Counter()
     for path in input_paths:
@@ -316,21 +291,18 @@ def get_word_freq_from_files(input_paths: list[str], special_tokens: list[str]) 
 # ---------------------------------------------------------------------------
 # Parallel pre-tokenization (§3.2, "recommended")
 #
-# Once merging is incremental, pre-tokenization is the bottleneck, and it is
-# embarrassingly parallel: the corpus is split into byte ranges aligned to
-# <|endoftext|> boundaries, each worker counts pre-token strings in its own
-# range, and the parent merges the counters. Workers return Counters keyed by
-# *strings* (~10^5 entries, a few MB) rather than byte tuples, which keeps the
-# inter-process pickling cheap.
+# Once merging is incremental, pre-tokenization is the bottleneck and is
+# embarrassingly parallel: split the corpus into byte ranges aligned to
+# <|endoftext|>, count in each range, merge the counters. Workers return
+# Counters keyed by strings rather than byte tuples to keep pickling cheap.
 # ---------------------------------------------------------------------------
 
 def find_chunk_boundaries(input_path: str, num_chunks: int,
                           delimiter: bytes = b"<|endoftext|>") -> list[int]:
     """Byte offsets splitting `input_path` into at most `num_chunks` ranges.
 
-    Every boundary lands immediately *after* a delimiter, so no document - and
-    therefore no pre-token - straddles two ranges, and each range decodes as
-    valid UTF-8 on its own (the delimiter is ASCII).
+    Every boundary lands just after a delimiter, so no document (and therefore
+    no pre-token) straddles two ranges and each range is valid UTF-8 on its own.
     """
     size = os.path.getsize(input_path)
     if num_chunks <= 1 or size == 0:
@@ -353,8 +325,8 @@ def find_chunk_boundaries(input_path: str, num_chunks: int,
                 if found != -1:
                     boundaries[i] = position + found + len(delimiter)
                     break
-                # Step forward, overlapping by len(delimiter)-1 bytes so a
-                # delimiter spanning two windows is still found.
+                # Overlap by len(delimiter)-1 so a delimiter spanning two
+                # windows is still found.
                 position += max(len(window) - len(delimiter) + 1, 1)
 
     # Ranges can collapse to empty if delimiters are sparse; drop duplicates.
@@ -362,8 +334,10 @@ def find_chunk_boundaries(input_path: str, num_chunks: int,
 
 
 def _count_pretoken_strings_in_range(task):
-    """Worker: count pre-token strings in one byte range. Module-level and
-    picklable so it survives the `spawn` start method on Windows/macOS."""
+    """Worker: count pre-token strings in one byte range.
+
+    Module-level and picklable, so it survives the `spawn` start method.
+    """
     input_path, start, end, special_tokens = task
     with open(input_path, "rb") as f:
         f.seek(start)
@@ -402,12 +376,11 @@ def get_word_freq_parallel(input_paths: list[str], special_tokens: list[str],
 
 def train_bpe_naive(word_freq: dict[tuple[bytes, ...], int], vocab: dict[int, bytes],
                     num_merges: int) -> list[tuple[bytes, bytes]]:
-    """Tutorial-1 style trainer: recount every pair from scratch after every merge.
+    """Tutorial-1 style trainer: recount every pair after every merge.
 
-    This is the O(num_merges * corpus_size) implementation that §3.2 asks you to
-    replace. It is kept as the reference the optimised trainer is checked
-    against, and as the "before" side of the Q2 speed comparison, so that both
-    uses share one definition instead of drifting apart.
+    The O(num_merges * corpus_size) implementation §3.2 asks you to replace.
+    Kept as the reference the optimised trainer is checked against, and as the
+    "before" side of the Q2 comparison, so both share one definition.
     """
     merges = []
     wf = dict(word_freq)
@@ -436,12 +409,10 @@ def derive_vocab_and_merges(merges: list[tuple[bytes, bytes]], vocab_size: int,
                             special_tokens: list[str]):
     """Build the (vocab, merges) pair for `vocab_size` from a longer merge list.
 
-    BPE is greedy and order-dependent only on what came before, so the first k
-    merges learned for a large target vocabulary *are* the merges a run with the
-    smaller target would have learned. Training once to the largest size needed
-    and truncating therefore gives exactly the same tokenizers as separate runs,
-    for one pre-tokenization pass instead of several - which is what makes the
-    §3.4 vocabulary study and the §3.5 second tokenizer nearly free.
+    BPE is greedy, so the first k merges of a long run are exactly the merges a
+    shorter run would learn. Training once to the largest size and truncating
+    gives the same tokenizers for one pre-tokenization pass, which is what makes
+    the §3.4 study and the §3.5 second tokenizer nearly free.
     """
     vocab = init_vocab(special_tokens)
     num_merges = vocab_size - len(vocab)
@@ -478,25 +449,26 @@ def train_bpe(input_path: str | list[str], vocab_size: int, special_tokens: list
     merges, _ = train_bpe_incremental(word_freq, vocab, num_merges)
 
     return vocab, merges
-    
+
+
 class BPETokenizer:
     def __init__(self, vocab, merges, special_tokens=None):
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = list(special_tokens) if special_tokens else []
-        
-        # Invert the vocabulary to map bytes back to IDs
+
+        # bytes -> ID, the inverse of the vocabulary
         self.token_to_id = {v: k for k, v in vocab.items()}
-        
-        # Store ranks to apply the earliest-learned merges first
+
+        # Ranks, so the earliest-learned merge is applied first
         self.merge_ranks = {pair: rank for rank, pair in enumerate(merges)}
         self._cache = {}
-        
-        # Same compiled pre-tokenizer regex the trainer uses, so encoding can
-        # never drift from the pre-tokenization the merges were learned over.
+
+        # The trainer's compiled regex, so encoding cannot drift from the
+        # pre-tokenization the merges were learned over.
         self.pat = _PAT
 
-    
+
 
     @classmethod
     def from_files(cls, vocab_path, merges_path, special_tokens=None):
@@ -505,60 +477,56 @@ class BPETokenizer:
         with open(merges_path, 'rb') as f:
             merges = pickle.load(f)
         return cls(vocab, merges, special_tokens)
-        
+
     def _apply_merges(self, word_bytes: tuple[bytes, ...]) -> tuple[bytes, ...]:
         """Greedily applies merges to a sequence of bytes based on learned merge ranks."""
         word = list(word_bytes)
         while len(word) > 1:
             best_rank = float('inf')
             best_idx = -1
-            
+
             for i in range(len(word) - 1):
                 pair = (word[i], word[i+1])
                 rank = self.merge_ranks.get(pair)
                 if rank is not None and rank < best_rank:
                     best_rank = rank
                     best_idx = i
-                    
+
             if best_idx == -1:
                 break
-                
+
             merged_token = word[best_idx] + word[best_idx+1]
             word = word[:best_idx] + [merged_token] + word[best_idx+2:]
-            
+
         return tuple(word)
 
     def encode(self, text: str) -> list[int]:
         ids = []
-        # Keep the special tokens as delimiters so we can emit their IDs directly.
+        # Keep the special tokens in the split, so their IDs can be emitted directly.
         if self.special_tokens:
             split_pattern = "(" + "|".join(re.escape(s) for s in self.special_tokens) + ")"
             chunks = re.split(split_pattern, text)
         else:
             chunks = [text]
-            
+
         for chunk in chunks:
             if not chunk:
                 continue
-                
+
             if chunk in self.special_tokens:
-                # Emit special token IDs directly by converting them to their byte representation
                 ids.append(self.token_to_id[chunk.encode("utf-8")])
             else:
                 for match in self.pat.finditer(chunk):
                     token_text = match.group()
-                    
+                    # Cache each distinct pre-token's IDs: the corpus repeats
+                    # them constantly, so merging happens once per distinct one.
                     if token_text not in self._cache:
-                        # Convert to individual bytes
-                        token_bytes = _to_byte_tuple(token_text)
-                        # Apply merges
-                        merged_bytes = self._apply_merges(token_bytes)
-                        # Store in cache
-                        self._cache[token_text] = [self.token_to_id[b] for b in merged_bytes]
-                        
+                        merged = self._apply_merges(_to_byte_tuple(token_text))
+                        self._cache[token_text] = [self.token_to_id[b] for b in merged]
+
                     ids.extend(self._cache[token_text])
         return ids
-    
+
     def encode_iterable(self, iterable) -> Iterator[int]:
         """Memory-efficient streaming encoding."""
         for text in iterable:
@@ -567,14 +535,13 @@ class BPETokenizer:
     def decode(self, ids: list[int]) -> str:
         """Decode a list of integer token IDs back into a string."""
         byte_sequence = b"".join(self.vocab[i] for i in ids)
-        # Decode to string using errors="replace" to safely handle partial multi-byte characters
+        # errors="replace": a prefix of a sequence can cut a character in half.
         return byte_sequence.decode("utf-8", errors="replace")
 
 
 if __name__ == "__main__":
-    # Smoke test: train a small tokenizer on samples.txt and round-trip the
-    # validation file through it. Paths are relative to the repo root (the
-    # parent of this file's directory) so this runs on any checkout.
+    # trained a small tokenizer on samples.txt and round-trip the
+    # validation file through it. Paths are relative to the repo root.
     import argparse
     import os
 

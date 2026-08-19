@@ -1,31 +1,23 @@
 """Task 1 end to end: train the byte-level BPE tokenizer and answer Q1-Q4 (§3).
 
-This is the single entry point for Task 1. It replaces three earlier scripts
-(src/run_task1.py, scripts/run_task_1.py, scripts/run_speed_test.py) that
-overlapped, disagreed, and two of which could not run at all.
+The corpus is pre-tokenized once and everything else comes off that single pass:
 
-The corpus is pre-tokenized ONCE and everything else is derived from that single
-pass:
+  * the Q3 compression curve - each merge reduces the corpus token count by
+    exactly the merged pair's count, so one run gives every point;
+  * both tokenizers - the first k merges of a long run are the merges a shorter
+    run would learn, so each is a truncation of one merge list;
+  * the Q1 timings - pre-tokenization and merging timed apart, since Q1 wants
+    their sum.
 
-  * the compression curve for Q3   - every merge reduces the corpus token count
-                                     by exactly the merged pair's count, so the
-                                     whole curve comes off one training run;
-  * the primary tokenizer          - the first k merges of a longer run *are*
-    and the §3.5 second tokenizer    the merges a shorter run would learn, so
-                                     both are truncations of one merge list;
-  * the Q1 timings                 - pre-tokenization and merging timed apart,
-                                     since only their sum is the answer to Q1.
-
-Run a smoke test first - `--limit_mb 50` exercises every step in a couple of
-minutes - before committing to the full corpus.
+Run `--limit_mb 50` first as a smoke test before committing to the full corpus.
 
 Examples
 --------
   # quick end-to-end check on a 50MB slice
-  python scripts/run_task1.py --limit_mb 50 --out_dir /tmp/task1_smoke
+  python scripts/run_task_1.py --limit_mb 50 --out_dir /tmp/task1_smoke
 
   # the real thing, pre-tokenizing in parallel
-  python scripts/run_task1.py --workers 8
+  python scripts/run_task_1.py --workers 8
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
@@ -62,8 +54,8 @@ def describe_machine():
 
 
 def make_slice(source_files, out_path, n_bytes):
-    """Copy the first `n_bytes` of the corpus into `out_path`, cut at a document
-    boundary so the slice is a whole number of documents."""
+    """Copy the first `n_bytes` of the corpus into `out_path`, ending on a
+    document boundary so the slice is a whole number of documents."""
     written = 0
     with open(out_path, "w", encoding="utf-8", newline="") as out:
         for path in source_files:
@@ -92,7 +84,7 @@ def save_tokenizer(vocab, merges, out_dir, prefix):
 
 
 def save_results(results, out_dir):
-    """Every number the report quotes must be traceable to a file in the repo."""
+    """Write every number the report quotes to logs/task1_results.json."""
     path = os.path.join(out_dir, "logs", "task1_results.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -118,14 +110,11 @@ def describe_merges(vocab, merges, n=5):
 def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pretok):
     """Build the compression curve, then commit to a vocabulary size.
 
-    §3.4 is the step that chooses the vocabulary size, so the curve has to exist
-    before any size is committed to - this runs before the Q1 timing rather than
-    after it. One run to the largest size of interest produces every point on
-    the curve, because each merge reduces the corpus token count by exactly the
-    merged pair's count.
+    §3.4 chooses the size from the curve, so the curve is built first and the Q1
+    timing follows. One run to the largest size of interest gives every point.
 
     Returns (merges_max, merges_primary, vocab_primary), or (None, None, None)
-    if no `--vocab_size` was given, meaning the caller should stop and let the
+    when no --vocab_size was given, meaning the caller should stop and let the
     curve inform the choice.
     """
     max_study = max(args.study_sizes + [args.second_vocab_size]
@@ -137,9 +126,8 @@ def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pr
         word_freq, vocab_max, max_study - base_size, track_token_counts=True)
     print(f"      {len(merges_max):,} merges in {(time.time() - t0) / 60:.1f} min")
 
-    # Save the full merge list so that choosing a different vocabulary size later
-    # costs nothing: any size <= max_study is a truncation of this list, and
-    # re-running with --from_merges skips the pre-tokenization pass entirely.
+    # Save the full merge list: any size <= max_study is a truncation of it, so
+    # --from_merges can change the choice without pre-tokenizing again.
     merges_max_path = os.path.join(args.out_dir, f"merges_upto{max_study}.pkl")
     with open(merges_max_path, "wb") as f:
         pickle.dump(merges_max, f)
@@ -193,8 +181,7 @@ def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pr
         "train_total_seconds": round(t_pretok + t_merge_chosen, 1),
     }
 
-    # The tokenizer derived from the longer run must equal the one trained
-    # directly here; assert it rather than trusting it.
+    # The truncated merge list must equal the directly trained one.
     assert derive_vocab_and_merges(merges_max, args.vocab_size, SPECIAL_TOKENS)[1] \
         == merges_primary, "truncated merge list disagrees with the direct run"
 
@@ -206,12 +193,11 @@ def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pr
 # ---------------------------------------------------------------------------
 
 def run_q2(slice_path, vocab_size, results):
-    """§3.2's claim, measured: incremental merge counting vs full recounting.
+    """§3.2 measured: incremental merge counting vs full recounting.
 
-    Both sides are given the *same* pre-token frequency table, so the comparison
-    isolates the merge loop - which is the thing §3.2 asks you to change.
-    Pre-tokenization is reported separately, and the end-to-end row adds it back
-    to both sides so the user-visible speedup is not overstated.
+    Both sides get the same pre-token frequency table, so the comparison
+    isolates the merge loop. Pre-tokenization is reported separately and added
+    back in the end-to-end row, so the speedup is not overstated.
     """
     print(f"\n[Q2] Tutorial vs optimised merge counting "
           f"(vocab_size={vocab_size}, {os.path.getsize(slice_path) / 1e6:.1f}MB slice)")
@@ -232,7 +218,7 @@ def run_q2(slice_path, vocab_size, results):
     merges_naive = train_bpe_naive(word_freq, vocab_naive, num_merges)
     t_naive = time.time() - t0
 
-    # The optimisation is only worth reporting if it computed the same answer.
+    # Only worth reporting if both trainers computed the same merges.
     assert merges_opt == merges_naive, "incremental and naive trainers disagree"
 
     results["q2"] = {
@@ -308,8 +294,8 @@ def main():
     results = {}
     prior_path = os.path.join(args.out_dir, "logs", "task1_results.json")
     if args.from_merges and os.path.exists(prior_path):
-        # A --from_merges run only derives and encodes; it must not clobber the
-        # Q1 timings and Q3 curve produced by the run that did the training.
+        # A --from_merges run only derives and encodes, so it must keep the Q1
+        # timings and Q3 curve from the run that did the training.
         with open(prior_path, encoding="utf-8") as f:
             results = json.load(f)
         print(f"Carrying forward earlier results from {prior_path}")
@@ -333,9 +319,8 @@ def main():
         base_size = len(init_vocab(SPECIAL_TOKENS))
 
         if args.from_merges:
-            # Reusing an earlier run's merge list: the pre-tokenization pass and
-            # the study have already been paid for, so go straight to deriving
-            # tokenizers and encoding.
+            # The pre-tokenization pass and the study are already paid for, so
+            # go straight to deriving tokenizers and encoding.
             if args.vocab_size is None:
                 parser.error("--from_merges requires --vocab_size "
                              "(the point of reusing merges is to commit to a size)")
@@ -351,7 +336,7 @@ def main():
         else:
             step_derive, step_encode = "5/6", "6/6"
 
-            # -- 1. Pre-tokenize once ---------------------------------------
+            # -- Pre-tokenize once ------------------------------------------
             print(f"\n[1/6] Pre-tokenizing (workers={args.workers}) ...")
             t0 = time.time()
             if args.workers > 1:
@@ -370,8 +355,7 @@ def main():
 
 
         # -- Derive and save both tokenizers ----------------------------------
-        # The §3.5 second tokenizer is another truncation of the same merge
-        # list, so it costs nothing beyond writing the file.
+        # The §3.5 second tokenizer is another truncation of the same list.
         vocab_second, merges_second = derive_vocab_and_merges(
             merges_max, args.second_vocab_size, SPECIAL_TOKENS)
 
@@ -400,7 +384,7 @@ def main():
         if args.skip_encode:
             print(f"\n[{step_encode}] Skipping corpus encoding (--skip_encode).")
         else:
-            # Plain ASCII: the Windows console's default code page mangles
+            # Plain ASCII in prints: the Windows console code page mangles
             # non-ASCII characters such as the section sign.
             print(f"\n[{step_encode}] Encoding corpus (section 3.5) ...")
             results["encoded"] = {}
@@ -417,8 +401,8 @@ def main():
                         print(f"      {os.path.basename(source)} -> {os.path.basename(out)}")
                         meta = encode_corpus(source, out, tokenizer)
                         results["encoded"][os.path.basename(out)] = meta
-            # With --from_merges there is no q1 block (the timings belong to the
-            # earlier run that actually did the training).
+            # With --from_merges there is no q1 block yet: the training
+            # timings belong to the earlier run.
             results.setdefault("q1", {})["encode_seconds"] = round(
                 time.time() - t_encode_start, 1)
 
@@ -456,7 +440,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Required for the `spawn` start method used by parallel pre-tokenization
-    # on Windows and macOS.
+    # Required by the `spawn` start method parallel pre-tokenization uses.
     multiprocessing.freeze_support()
     main()

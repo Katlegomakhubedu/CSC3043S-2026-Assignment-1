@@ -21,8 +21,8 @@ class TransformerConfig:
     ffn_type: str = 'swiglu'   # 'swiglu' or 'relu'
 
 class TransformerLM(nn.Module):
-    """
-    A decoder-only Transformer language model in the modern dense style.
+    """Decoder-only Transformer language model (§4.1).
+
     params:
         config: a TransformerConfig
     """

@@ -8,7 +8,9 @@ class TransformerBlock(nn.Module):
     """
     Pre-norm Transformer block: attention sub-layer then feed-forward sub-layer.
     params:
-        d_model, n_heads, d_ff: sizes
+        d_model, n_heads, d_ff: sizes. `d_ff` is used as given, so a ReLU block
+                     needs the caller to pass relu_ffn_hidden_dim(d_ff) to match
+                     SwiGLU's parameter count.
         rope:        shared RotaryPositionalEmbedding module
         use_qk_norm: passed through to the attention module
     """
@@ -25,8 +27,6 @@ class TransformerBlock(nn.Module):
         if ffn_type == 'swiglu':
             self.ffn = SwiGLU(d_model, d_ff)
         else:
-            # Match SwiGLU's total parameter count at the same d_ff, rather than
-            # reusing d_ff as-is (which would give ReLU only 2/3 as many params).
             self.ffn = ReLUFFN(d_model, d_ff)
 
     def forward(self, x, use_cache=False):

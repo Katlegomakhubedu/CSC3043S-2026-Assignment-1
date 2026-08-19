@@ -1,20 +1,17 @@
 """Compression ratio vs vocabulary size (§3.4, Q3).
 
-Trains BPE once to the largest vocabulary size of interest and reads the
-compression ratio for every smaller size off the same run: each merge reduces
-the corpus token count by exactly the merged pair's count, so the whole curve
-costs one training run rather than one per point.
+Trains BPE once to the largest size of interest and reads the compression ratio
+for every smaller size off the same run, since each merge reduces the corpus
+token count by exactly the merged pair's count.
 
-Also reports the embedding/LM-head parameter cost of each vocabulary size, since
-§3.4 asks for the choice to be justified on the curve *together with* the effect
-on the parameter count.
+Also reports each size's embedding/LM-head parameter cost, which §3.4 asks the
+choice to be justified against alongside the curve.
 """
 import sys, os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import csv
 
 import matplotlib
-matplotlib.use("Agg")  # headless: this script only saves a PNG, and plt.show()
-                        # with no display (Colab CPU runtime, CI, ...) blocks.
+matplotlib.use("Agg")   # headless: this script only saves a PNG
 import matplotlib.pyplot as plt
 
 from src.tokenizer import (get_word_freq_from_files, get_word_freq_parallel,
@@ -25,7 +22,8 @@ def train_bpe_with_counts(input_path, max_vocab_size, special_tokens, workers=1)
     """Train to `max_vocab_size`, tracking the corpus token count after every merge.
 
     Uses the same incremental trainer as `train_bpe`, so the curve reflects the
-    real training algorithm rather than a separate reimplementation.
+    real algorithm rather than a reimplementation.
+
     Returns (vocab, merges, token_counts, initial_vocab_size, word_freq).
     """
     input_paths = [input_path] if isinstance(input_path, str) else list(input_path)
@@ -47,13 +45,10 @@ def train_bpe_with_counts(input_path, max_vocab_size, special_tokens, workers=1)
 def corpus_size_from_word_freq(word_freq):
     """(characters, UTF-8 bytes) of the pre-tokenized text, from the frequency table.
 
-    The GPT-2 pre-tokenizer regex tiles a document completely - every character
-    belongs to exactly one match - so the corpus is the concatenation of its
-    pre-tokens and its size can be read off `word_freq` directly. That avoids a
-    second full pass over a 2.2GB file purely to count characters, and it counts
-    exactly the text the token counts are measured over: document text with the
-    <|endoftext|> delimiters excluded, since those are stripped before
-    pre-tokenization and never counted as tokens.
+    The GPT-2 regex tiles a document completely, so the corpus is the
+    concatenation of its pre-tokens and its size reads straight off `word_freq`
+    - no second pass over a 2.2GB file. This counts exactly the text the token
+    counts cover: document text with the <|endoftext|> delimiters excluded.
     """
     n_bytes = 0
     n_chars = 0
@@ -86,8 +81,8 @@ def compute_compression_metrics(word_freq, token_counts, initial_vocab_size,
             "tokens": token_count,
             "bytes_per_token": n_bytes / token_count,
             "chars_per_token": n_chars / token_count,
-            # Embedding + untied LM head, the part of the parameter budget that
-            # scales with the vocabulary (§4.1).
+            # Embedding + untied LM head: the part of the budget that scales
+            # with the vocabulary (§4.1).
             "embed_lm_head_params": 2 * target * d_model,
         })
     return metrics, n_chars, n_bytes
@@ -123,7 +118,7 @@ def plot_compression(metrics, output_file="compression_ratio.png"):
 
 
 def write_csv(metrics, output_file):
-    """Every number quoted in the report must be traceable to a file in the repo."""
+    """Write the Q3 table, so the report's numbers are traceable to a file."""
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(metrics[0].keys()))
         writer.writeheader()
