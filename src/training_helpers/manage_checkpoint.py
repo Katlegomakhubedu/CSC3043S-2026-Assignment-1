@@ -28,7 +28,6 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=No
     Only meant for checkpoints this codebase produced itself, so we don't
     restrict to `weights_only=True` (that would reject the RNG state).
     returns:
-        the step number stored in the checkpoint
     """
     checkpoint = torch.load(path, map_location=map_location, weights_only=False)
     model.load_state_dict(checkpoint['model'])
@@ -43,4 +42,4 @@ def load_checkpoint(path, model, optimizer=None, scheduler=None, map_location=No
             np.random.set_state(checkpoint['numpy_rng_state'])
         if 'python_rng_state' in checkpoint:
             random.setstate(checkpoint['python_rng_state'])
-    return checkpoint['step']
+    return checkpoint['step'], checkpoint.get('config')

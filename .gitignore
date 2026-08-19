@@ -35,9 +35,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# NOTE: tokenizer vocab/merges files and logs/ (JSONL/CSV) are intentionally
-# NOT ignored — Section 10.1 requires them to be committed since they are small.
+# --- Smoke-run output (scripts/run_task3_questions.py --smoke) --
+logs/smoke/
 
-# --- Tutorial notebooks (not part of submitted work: never commit) ---
+# --- Tutorial notebooks
 CSC3043S_Tutorial_Posttraining.ipynb
 CSC3043S_Tutorial_Transformer_LM_solutions.ipynb

@@ -52,6 +52,14 @@ its modules import each other relatively, so everything imports it as
 `src.model`, `src.tokenizer`, … with the repo root on `sys.path` — tests and
 scripts now share that one convention.
 
+Task 3 adds `tests/test_task3_training.py`, which turns §5.6's "before you
+spend GPU hours" checklist into tests — loss at initialisation near
+ln(vocab_size), overfitting a single batch, a resumed run reproducing the
+uninterrupted trajectory, a short run that neither NaNs nor stalls — plus the
+parts of §5.1–5.3 that are quietly wrong-able: which parameters weight decay
+reaches, whether the cosine period matches the run length, and whether the
+logged gradient norm is the pre-clipping one.
+
 ## Task 1 — tokenizer (§3, Q1–Q4)
 
 The corpus is pre-tokenized **once** and everything else is derived from that
@@ -152,24 +160,80 @@ and the uncached 256, so dividing both by 256 would compare different amounts of
 work. Q7 divides by the true count from `tokens_actually_generated`, which
 `tests/test_task2_questions.py` checks against real generation.
 
-## Tasks 3–5
+## Task 3 — training (§5, Q8–Q9)
+
+`src/train.py` is the §5 deliverable: AdamW with decoupled decay on the weight
+matrices only, linear warmup into cosine decay, gradient clipping, bf16
+autocast, checkpoint/resume, and CSV logging. Every hyperparameter is a flag
+(§5.5), including the §7.2 architecture switches the ablations need:
+
+```bash
+python -m src.train --train_data train_encoded.npy --valid_data valid_encoded.npy     --steps 5000 --lr 3e-3 --warmup_steps 200 --run_name baseline
+
+# the §7.2 ablations, from the command line
+python -m src.train ... --no_rmsnorm
+python -m src.train ... --no_rope
+python -m src.train ... --ffn_type relu --d_ff 2048
+
+# resume an interrupted job (§5.5) — keep --steps the same, or the restored
+# scheduler is one built for a different run length
+python -m src.train ... --resume checkpoints/baseline_step4000.pt --steps 5000
+```
+
+**GPU required for the real runs.** A step of the §4.1 model at
+`batch_size=32` takes ~12s on this CPU, so Q8 alone is ~1.4 hours and Q9 ~13,
+and §5.4 puts bf16 on CUDA only — on CPU both Q8 arms run fp32 and the
+comparison is vacuous. The script says so rather than reporting the two equal
+numbers as a result. Check the pipeline first:
+
+```bash
+python scripts/run_task3_questions.py --smoke    # ~1 min, tiny model, into logs/smoke/
+python scripts/run_task3_questions.py            # the real Q8 and Q9
+python scripts/run_task3_questions.py --questions 9 --lr 1e-3
+```
+
+Set `--lr` to the Q10 sweep winner before quoting Q9; the default is §5's
+starting value, not a tuned one.
+
+Outputs:
+
+| Output | Answers |
+|---|---|
+| `logs/task3_results.json` | every number quoted for Q8–Q9 |
+| `logs/<run>.csv` | §5.5's row per evaluation: step, wall time, tokens, lr, losses, grad norm |
+| `logs/<run>_steps.csv` | per-step pre-clip gradient norm and step time |
+| `task3_q9_warmup.png` | **the Q9 figure** |
+
+Three things that quietly invalidate these answers, and what the code does
+about them:
+
+*Each arm gets a freshly initialised model.* Reusing one model object across
+runs — what the script used to do — means the second arm starts from weights
+the first arm already trained, so Q9 compares warmup against "no warmup, plus
+200 steps of training in hand". Both arms now begin from identical weights.
+
+*Step time is measured around the forward/backward/step only*, inside the
+training loop, with a CUDA sync on each side. Dividing total wall-clock by the
+step count instead folds in validation passes, and without the sync the timer
+measures kernel enqueue rather than work — bf16 and fp32 come out identical.
+
+*The batch at step N is seeded from `(seed, step)`, not drawn from a generator
+advanced once per step.* A long-lived generator is rebuilt from `seed` when a
+run resumes while the loop restarts mid-run, so a job resumed at step 26
+replayed the batches from steps 1–25 and drifted off the uninterrupted
+trajectory §5.6 requires it to match.
+
+## Tasks 4–5
 
 Not yet reproducible from a single command — see `EXPERIMENTS.md` for the run
 log. Entry points as they stand:
 
 | Script | Covers |
 |---|---|
-| `src/train.py` | training loop, optimiser/schedule, checkpointing, logging (CLI) |
 | `src/evaluate.py` | perplexity, BPC, position-wise loss |
 | `src/generate.py` | sampling + KV-cache generation |
-| `scripts/run_task3_questions.py` | Q8–Q9 |
 | `scripts/run_task4_questions.py` | Q10–Q17 |
 | `scripts/run_task5_questions.py` | Q18–Q20 |
-
-> **Known gap:** `src/train.py` hardcodes `use_rmsnorm`, `use_rope` and
-> `ffn_type` when it builds the config, so the §7.2 ablations are not yet
-> reachable from the command line even though `TransformerConfig` supports all
-> three. Needs three CLI flags before the Task 7 runs.
 
 ## Repository layout
 
@@ -179,15 +243,17 @@ src/
   model.py              RMSNorm, SwiGLU, RoPE, attention, block, TransformerLM, KV cache
   data.py               memmap loader, batching
   train.py              training loop, optimiser/schedule, checkpointing, logging, CLI
+  training_helpers/     batching, checkpoint save/load
   evaluate.py           perplexity, BPC
   generate.py           sampling + KV-cache generation
 scripts/
   run_task1.py          Task 1 end to end (Q1-Q4)
   run_task2_questions.py  Task 2 end to end (Q5-Q7)
+  run_task3_questions.py  Task 3 end to end (Q8-Q9)
   encode_corpus.py      corpus -> uint16 .npy + metadata sidecar
   vocab_study.py        compression ratio vs vocabulary size
   make_plots.py         figures from run logs
-  run_task{2,3,4,5}_questions.py
+  run_task{4,5}_questions.py
 tests/
 logs/                   one CSV/JSONL per run
 configs/
