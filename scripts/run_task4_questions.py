@@ -53,6 +53,7 @@ import matplotlib.pyplot as plt
 from src.model import TransformerLM, TransformerConfig
 from src.train import train, resolve_amp
 from src.evaluate import evaluate, evaluate_by_position, chars_from_meta
+from src.data import load_token_parts
 from src.training_helpers.manage_checkpoint import load_checkpoint
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -117,42 +118,79 @@ def build_model(config, device):
 # data
 # ---------------------------------------------------------------------------
 
+def corpus_paths(data_dir, vocab_size, primary_vocab_size):
+    """Where Task 1 §3.5 puts the encoded corpus for a given vocabulary size.
+
+    Task 1 writes the training split as two arrays, because the corpus ships as
+    two files, and suffixes the second tokenizer's outputs (`valid_vocab1000.npy`).
+    """
+    suffix = "" if vocab_size == primary_vocab_size else f"_vocab{vocab_size}"
+
+    # A combined train.npy wins if scripts/combine_train_parts.py has been run;
+    # otherwise the parts are read as one sequence. Both are the same tokens in
+    # the same order, so which one is present changes nothing but bookkeeping.
+    combined = os.path.join(data_dir, f"train{suffix}.npy")
+    parts = [os.path.join(data_dir, f"train_part{i}{suffix}.npy") for i in (1, 2)]
+    if os.path.exists(combined):
+        train = [combined]
+    else:
+        train = [p for p in parts if os.path.exists(p)] or parts[:1]
+
+    return {
+        "train": train,
+        # §2 reserves the last 2,000 validation documents as a test set to be
+        # touched exactly once. Model selection therefore scores the *split*
+        # validation array; the full valid.npy still contains those documents.
+        "valid": os.path.join(data_dir, f"valid_split{suffix}.npy"),
+        "suffix": suffix,
+    }
+
+
 def load_corpus(args, vocab_size):
     """Memory-mapped encoded arrays for a vocabulary size, plus char counts.
 
-    Task 1 §3.5 writes `train_encoded.npy` / `valid_encoded.npy` for the primary
-    tokenizer and a `vocab<N>_` prefixed pair for the second one. Nothing here
-    re-tokenizes: the encoded corpus is the input.
+    Nothing here re-tokenizes: the encoded corpus from Task 1 is the input, and
+    the two training parts are addressed as one sequence rather than copied
+    into a single array (§5.5).
     """
     if args.smoke:
         return synthetic_corpus(vocab_size)
 
-    prefix = "" if vocab_size == BASE_CONFIG["vocab_size"] else f"vocab{vocab_size}_"
-    train_npy = os.path.join(args.data_dir, f"{prefix}train_encoded.npy")
-    valid_npy = os.path.join(args.data_dir, f"{prefix}valid_encoded.npy")
+    paths = corpus_paths(args.data_dir, vocab_size, BASE_CONFIG["vocab_size"])
 
-    missing = [p for p in (train_npy, valid_npy) if not os.path.exists(p)]
+    if not os.path.exists(paths["valid"]):
+        raise SystemExit(
+            f"{os.path.basename(paths['valid'])} is missing. Section 2's "
+            f"validation/test split has to exist before any model selection "
+            f"happens, or the reserved test documents get scored at every "
+            f"evaluation. Build it with:\n"
+            f"  python scripts/make_splits.py --vocab vocab.pkl --merges merges.pkl"
+            + (f" --suffix {paths['suffix']}" if paths["suffix"] else ""))
+
+    missing = [p for p in paths["train"] if not os.path.exists(p)]
     if missing:
         raise SystemExit(
-            "Task 4 needs the encoded corpus from Task 1 section 3.5, and these are "
-            "missing:\n  " + "\n  ".join(os.path.basename(p) for p in missing) +
-            f"\n\nRun Task 1 phase 2 to produce them:\n"
-            f"  python scripts/run_task_1.py --vocab_size {vocab_size} "
-            f"--from_merges merges_upto16000.pkl\n\n"
-            f"Or point --data_dir at wherever they already are, or use --smoke "
-            f"to exercise this script on synthetic data first.")
+            "Task 4 trains on the encoded corpus from Task 1 section 3.5, and "
+            "these are missing:\n  " +
+            "\n  ".join(os.path.basename(p) for p in missing) +
+            f"\n\nRun Task 1 phase 2 for vocab_size={vocab_size}, or point "
+            f"--data_dir at wherever they already are. --smoke exercises this "
+            f"script on synthetic data without them.")
 
-    train_chars, convention = chars_from_meta(train_npy)
-    valid_chars, _ = chars_from_meta(valid_npy)
+    train_chars = sum(chars_from_meta(p)[0] or 0 for p in paths["train"])
+    valid_chars, convention = chars_from_meta(paths["valid"])
+    train_ids = load_token_parts(paths["train"])
+
     return {
-        "train": np.load(train_npy, mmap_mode="r"),
-        "valid": np.load(valid_npy, mmap_mode="r"),
-        "valid_path": valid_npy,
+        "train": train_ids,
+        "valid": np.load(paths["valid"], mmap_mode="r"),
+        "valid_path": paths["valid"],
         "valid_chars": valid_chars,
         "train_chars": train_chars,
         "char_convention": convention,
         "vocab_size": vocab_size,
-        "source": os.path.basename(train_npy),
+        "source": (f"{len(paths['train'])} train part(s) + "
+                   f"{os.path.basename(paths['valid'])}"),
     }
 
 

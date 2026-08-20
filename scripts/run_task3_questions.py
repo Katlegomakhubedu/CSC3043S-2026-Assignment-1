@@ -118,11 +118,16 @@ def resolve_data(args):
             "synthetic": False}
 
     train_npy = os.path.join(REPO_ROOT, "train_encoded.npy")
-    valid_npy = os.path.join(REPO_ROOT, "valid_encoded.npy")
+    # §2 reserves the last 2,000 validation documents as a test set to be
+    # touched exactly once, so anything that guides a modelling decision scores
+    # the split array rather than the whole validation file.
+    valid_npy = os.path.join(REPO_ROOT, "valid_split_encoded.npy")
+    if not os.path.exists(valid_npy):
+        valid_npy = os.path.join(REPO_ROOT, "valid_encoded.npy")
     if os.path.exists(train_npy) and os.path.exists(valid_npy):
         return load(train_npy), load(valid_npy), {
             "source": "task 1 encoded corpus", "train": "train_encoded.npy",
-            "valid": "valid_encoded.npy", "synthetic": False}
+            "valid": os.path.basename(valid_npy), "synthetic": False}
 
     if os.path.exists(valid_npy):
         # Only the validation split has been encoded so far. Split it in two
@@ -130,10 +135,10 @@ def resolve_data(args):
         # tokens, which would make the validation curve meaningless.
         data = load(valid_npy)
         cut = int(0.9 * len(data))
-        print(f"  ! train_encoded.npy not found - splitting valid_encoded.npy "
+        print(f"  ! train_encoded.npy not found - splitting {os.path.basename(valid_npy)} "
               f"{cut:,}/{len(data)-cut:,} into disjoint train/val halves.")
         return data[:cut], data[cut:], {
-            "source": "valid_encoded.npy split 90/10 (train split not yet encoded)",
+            "source": f"{os.path.basename(valid_npy)} split 90/10 (train split not yet encoded)",
             "n_train_tokens": cut, "n_val_tokens": len(data) - cut, "synthetic": False}
 
     print("  ! No encoded corpus found - falling back to RANDOM tokens. "

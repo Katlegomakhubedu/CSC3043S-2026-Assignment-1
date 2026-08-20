@@ -1,10 +1,56 @@
 import torch
 import torch.nn.functional as F
-from .seed import set_seed
 
-set_seed(42)
+# No set_seed() at import: seeding is `generate(seed=...)`'s job, per call.
+# Doing it here made merely importing this module reseed the caller's RNG and
+# switch torch into deterministic-algorithms mode as a side effect.
 
 END_OF_TEXT = "<|endoftext|>"
+
+
+def truncate_distribution(probs, top_k=None, top_p=None):
+    """Apply top-k and/or top-p truncation to `probs` and renormalise (§4.3).
+
+    Both keep a subset of the distribution and zero the rest; applied together,
+    top-k runs first and top-p then narrows what survives.
+
+    params:
+        probs: (vocab_size,) probabilities, summing to 1
+        top_k: keep only the k most probable tokens
+        top_p: keep the smallest set whose cumulative probability reaches top_p
+    returns:
+        a renormalised distribution over the kept tokens
+
+    Separate from `generate` so the cutoff can be tested against a distribution
+    whose answer is known by hand. The top-p boundary in particular is easy to
+    get wrong by one either way: too few tokens and a distribution whose prefix
+    sums land exactly on top_p loses its last legitimate token; too many and
+    top_p=0.9 quietly behaves like 0.95.
+    """
+    truncated = False
+
+    if top_k is not None and top_k > 0:
+        top_k_vals, top_k_indices = torch.topk(probs, min(top_k, probs.size(-1)))
+        probs = torch.zeros_like(probs).scatter_(-1, top_k_indices, top_k_vals)
+        truncated = True
+
+    if top_p is not None and 0.0 < top_p < 1.0:
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cum_probs = torch.cumsum(sorted_probs, dim=-1)
+        # The smallest prefix whose cumulative probability reaches top_p: the
+        # leftmost index that gets there, plus one to make it a count.
+        # right=False keeps a prefix sum landing exactly on top_p from pulling
+        # in one extra token.
+        cutoff = torch.searchsorted(
+            cum_probs, torch.tensor(top_p, device=cum_probs.device), right=False) + 1
+        keep_indices = sorted_indices[:cutoff]      # always at least one token
+        mask = torch.zeros_like(probs).scatter_(-1, keep_indices, 1.0)
+        probs = probs * mask
+        truncated = True
+
+    if truncated:
+        probs = probs / probs.sum()
+    return probs
 
 @torch.no_grad()
 def generate(model, tokenizer, prompt: str, max_new_tokens: int = 256, temperature: float = 1.0, top_k: int | None = None,
@@ -75,26 +121,7 @@ def generate(model, tokenizer, prompt: str, max_new_tokens: int = 256, temperatu
             scaled_logits = next_logits / temperature
             probs = F.softmax(scaled_logits, dim=-1)
 
-            # --- Top-k truncation: keep the top_k tokens, zero the rest ---
-            if top_k is not None and top_k > 0:
-                top_k_vals, top_k_indices = torch.topk(probs, min(top_k, probs.size(-1)))
-                probs = torch.zeros_like(probs).scatter_(-1, top_k_indices, top_k_vals)
-
-            # --- Top-p (nucleus) truncation ---
-            if top_p is not None and 0.0 < top_p < 1.0:
-                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-                cum_probs = torch.cumsum(sorted_probs, dim=-1)
-                # Smallest set whose cumulative probability reaches top_p: the
-                # leftmost index that gets there, plus one. right=False keeps a
-                # prefix sum landing exactly on top_p from including one extra.
-                cutoff = torch.searchsorted(cum_probs, torch.tensor(top_p, device=cum_probs.device), right=False) + 1
-                keep_indices = sorted_indices[:cutoff]      # always at least one
-                mask = torch.zeros_like(probs).scatter_(-1, keep_indices, 1.0)
-                probs = probs * mask
-
-            # --- Renormalise after any truncation ---
-            if top_k is not None or (top_p is not None and 0.0 < top_p < 1.0):
-                probs = probs / probs.sum()
+            probs = truncate_distribution(probs, top_k=top_k, top_p=top_p)
 
             # Sample
             probs_cpu = probs.cpu()
