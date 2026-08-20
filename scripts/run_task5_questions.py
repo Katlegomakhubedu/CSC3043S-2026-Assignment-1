@@ -22,7 +22,7 @@ Three rules this script exists to enforce:
     Inventing an illustrative "model output" would be fabricating evidence.
 
 Every number and every sample lands in logs/task5_results.json, and the raw
-samples in samples.txt.
+samples in task5_samples.txt.
 
 Examples
 --------
@@ -248,7 +248,7 @@ def console_safe(text):
 
     A model can emit any byte sequence its tokenizer can decode, and Windows
     consoles default to cp1252 - printing a sample raw kills the run partway
-    through Q19. samples.txt is written as UTF-8 regardless, so nothing is lost
+    through Q19. task5_samples.txt is written as UTF-8 regardless, so nothing is lost
     from the record; only the console view is degraded.
     """
     encoding = sys.stdout.encoding or "utf-8"
@@ -535,7 +535,8 @@ def main(argv=None):
         handlers[q](args, model, config, record, tokenizer, device, results)
 
     path = save_results(results, args.log_dir)
-    samples_path = write_samples(results, os.path.join(args.out_dir, "samples.txt"),
+    samples_path = write_samples(results,
+                                 os.path.join(args.out_dir, "task5_samples.txt"),
                                  record is not None)
     print("\n" + "=" * 70)
     print("TASK 5 COMPLETE")

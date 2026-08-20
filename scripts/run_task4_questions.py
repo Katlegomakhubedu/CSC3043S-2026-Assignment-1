@@ -68,7 +68,7 @@ BASE_CONFIG = dict(vocab_size=4000, context_length=256, n_layers=4, d_model=512,
 # only `num_steps`, and §7.4's final model only `num_steps` again.
 STANDARD_RUN = dict(batch_size=32, num_steps=5000, warmup_steps=200,
                     weight_decay=0.1, grad_clip=1.0, eval_every=50,
-                    save_every=1000, seed=42)
+                    save_every=0, seed=42)
 
 SWEEP_LRS = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2]   # §7.1's suggested grid
 RELU_D_FF = 2048                             # §7.2: matches SwiGLU's 1344 to within 2%
@@ -828,7 +828,8 @@ def run_final_model(args, corpus, device, results):
     best_lr, _ = resolve_best_lr(args, results)
     steps = args.final_steps or 4 * STANDARD_RUN["num_steps"]
     exp = Experiment(name="final_model", phase="final_model", lr=best_lr,
-                     run_overrides={"num_steps": steps},
+                     run_overrides={"num_steps": steps,
+                                    "save_every": args.final_save_every},
                      note=f"section 7.4: {steps} steps, cosine period matched")
     record = ensure_run(args, exp, corpus, device)
 
@@ -937,6 +938,9 @@ def build_parser():
     p.add_argument("--reduced_lr_factor", type=float, default=3.0,
                    help="How far below the best learning rate the reduced run "
                         "sits when --reduced_lr is not given.")
+    p.add_argument("--final_save_every", type=int, default=2000,
+                   help="Checkpoint interval for section 7.4's long run, which "
+                        "is the only one worth being able to resume.")
     p.add_argument("--final_steps", type=int, default=None,
                    help="Section 7.4's run length. Defaults to 4x the standard run.")
     # evaluation
