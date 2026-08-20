@@ -1,0 +1,15 @@
+{
+  "input_file": "valid_split.txt",
+  "output_file": "valid_split_vocab1000.npy",
+  "vocab_size": 1000,
+  "n_tokens": 6582852,
+  "n_documents": 25630,
+  "n_chars_excluding_delimiters": 20532743,
+  "n_chars_including_delimiters": 20865933,
+  "n_bytes_utf8_excluding_delimiters": 20541347,
+  "eot_id": 0,
+  "eot_count": 25630,
+  "bytes_per_token": 3.1204327546783674,
+  "chars_per_token": 3.1191257224072486,
+  "encode_seconds": 2.5
+}

@@ -1,0 +1,15 @@
+{
+  "input_file": "TinyStoriesV2-GPT4-valid.txt",
+  "output_file": "valid_vocab1000.npy",
+  "vocab_size": 1000,
+  "n_tokens": 7096738,
+  "n_documents": 27631,
+  "n_chars_excluding_delimiters": 22134197,
+  "n_chars_including_delimiters": 22493400,
+  "n_bytes_utf8_excluding_delimiters": 22143411,
+  "eot_id": 0,
+  "eot_count": 27631,
+  "bytes_per_token": 3.12022382677788,
+  "chars_per_token": 3.1189254837926947,
+  "encode_seconds": 2.7
+}

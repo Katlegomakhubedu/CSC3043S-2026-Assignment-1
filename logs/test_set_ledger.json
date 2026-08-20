@@ -1,0 +1,11 @@
+[
+  {
+    "when": "2026-08-20T22:56:52+00:00",
+    "run_name": "final_model",
+    "checkpoint": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\checkpoints\\final_model_final.pt",
+    "loss": 1.416601196556593,
+    "perplexity": 4.1230830497320605,
+    "bpc": 0.5217885268071101,
+    "n_tokens": 408832
+  }
+]

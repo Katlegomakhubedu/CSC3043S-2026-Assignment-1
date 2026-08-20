@@ -1,0 +1,68 @@
+Prompt: 'Once upon a time,'
+Trained model: True
+Written: 2026-08-20T22:56:27+00:00
+
+======================================================================
+[Q19] greedy (temperature=0)
+settings: {'temperature': 0.0}
+======================================================================
+Once upon a time, there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball in the sky. She wanted to play with it.
+Lily ran to her mom and said, "Mom, can I play with the big, red ball?" Her mom said, "Yes, but be careful. The ball might fly away."
+Lily played with the big, red ball. She kicked it high in the sky. The ball went up, up, up. But then, the ball went too high. It got stuck in a tree.
+Lily was sad. She wanted her ball back. Her mom said, "Don't worry, Lily. We can get it." They got a long stick and got the ball down. Lily was happy again. She played with the big, red ball all day long.
+<|endoftext|>
+
+======================================================================
+[Q19] temperature=0.8, top-k=40
+settings: {'temperature': 0.8, 'top_k': 40}
+======================================================================
+Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the other trees.
+One day, Tom saw something weird outside the tree. It was a big, shiny rock. Tom did not know what it was. He was very curious.
+Tom climbed back down and found a small, shiny rock. He was so happy! Tom showed the rock to his friends and they all thought it was interesting. They all played with the rock and had a fun day.
+<|endoftext|>
+
+======================================================================
+[Q19] temperature=0.9, top-p=0.95
+settings: {'temperature': 0.9, 'top_p': 0.95}
+======================================================================
+Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.
+One day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.
+Tom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.
+<|endoftext|>
+
+======================================================================
+[Q20] temperature=0.15 (no truncation)
+settings: {'temperature': 0.15}
+======================================================================
+Once upon a time, there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball. She wanted to play with it.
+Lily kicked the ball very hard. The ball went up, up, up into the sky. Lily was sad. She wanted her ball back. She thought of a plan.
+Lily ran inside her house. She found a big box. She put the ball inside the box. She closed the box and went back to the park. Lily played with the ball all day. She was happy again.
+<|endoftext|>
+
+======================================================================
+[Q20] Once upon a time,
+settings: {'label': 'temperature=0.9, top-p=0.95', 'temperature': 0.9, 'top_p': 0.95}
+======================================================================
+Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.
+One day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.
+Tom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.
+<|endoftext|>
+
+======================================================================
+[Q20] The little girl found a key that
+settings: {'label': 'temperature=0.9, top-p=0.95', 'temperature': 0.9, 'top_p': 0.95}
+======================================================================
+The little girl found a key that could unlock the door. She was so excited! She ran inside and grabbed the key. She turned it and the door opened!
+Once inside was a room full of books! They were so fun and full of books! The little girl could read all the books and she was so excited. She opened the book and read and read as a reward. 
+The little girl couldn't contain herself as she read about the world and all the people in the world. It was so much fun. She loved the story and she couldn't wait to tell her friends about it.
+<|endoftext|>
+
+======================================================================
+[Q20] Tom and Sara wanted to build
+settings: {'label': 'temperature=0.9, top-p=0.95', 'temperature': 0.9, 'top_p': 0.95}
+======================================================================
+Tom and Sara wanted to build a box of paper and glue. But they knew they should not play with things they should not. They had to ask Mom first.
+Mom was angry. She had a surprise for them. She said they had to clean their room and leave the box to their room. Tom and Sara did not want to do it. They liked to play with their toys, but they knew they had to clean up.
+They put on their pajamas and grabbed the box of paper. They threw it in the trash and looked for a way to make the box tidy again. They found some tape, some tape, and some soap. They started to make the box tidy again.
+But soon, they started to argue. They both wanted to use the tape, and the box for a little while. They did not want to share or say sorry. They only wanted to use the tape. They did not listen to Mom. They kept knocking and tugging. They did not listen to Mom.
+Mom was not happy. She saw Tom and Sara fight. She was not happy. She said, "Tom and Sara, you are naughty. You are not playing nicely. You have to learn to clean up your mess. If

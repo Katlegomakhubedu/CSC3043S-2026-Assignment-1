@@ -1,0 +1,17 @@
+{
+  "source": "TinyStoriesV2-GPT4-valid.txt",
+  "test_docs_reserved": 2000,
+  "vocab_size": 4000,
+  "splits": {
+    "valid_split": {
+      "tokens": 5243773,
+      "documents": 25630,
+      "chars_excluding_delimiters": 20532743
+    },
+    "test_split": {
+      "tokens": 408871,
+      "documents": 2000,
+      "chars_excluding_delimiters": 1601452
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "output_file": "train_vocab1000.npy",
+  "input_file": [
+    "TinyStoriesV2-GPT4-train.txt",
+    "TinyStoriesV2-GPT4-train-part2.txt"
+  ],
+  "combined_from": [
+    "train_part1_vocab1000.npy",
+    "train_part2_vocab1000.npy"
+  ],
+  "n_parts": 2,
+  "n_tokens": 703090433,
+  "n_documents": 2717701,
+  "n_chars_excluding_delimiters": 2191515181,
+  "n_chars_including_delimiters": 2226845294,
+  "n_bytes_utf8_excluding_delimiters": 2192423075,
+  "eot_count": 2717701,
+  "vocab_size": 1000,
+  "eot_id": 0,
+  "chars_per_token": 3.1169748273334847,
+  "bytes_per_token": 3.1182661178380733
+}

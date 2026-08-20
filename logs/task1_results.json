@@ -1,18 +1,18 @@
 {
   "machine": {
-    "platform": "Windows-11-10.0.26200-SP0",
-    "processor": "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel",
-    "cpu_count": 12,
-    "python": "3.13.6"
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+    "cpu_count": 16,
+    "python": "3.11.9"
   },
   "config": {
     "train_files": [
-      "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-train.txt",
-      "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-train-part2.txt"
+      "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\data\\TinyStoriesV2-GPT4-train.txt",
+      "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\data\\TinyStoriesV2-GPT4-train-part2.txt"
     ],
-    "valid_file": "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy\\data\\TinyStoriesV2-GPT4-valid.txt",
-    "vocab_size": null,
-    "from_merges": null,
+    "valid_file": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\data\\TinyStoriesV2-GPT4-valid.txt",
+    "vocab_size": 4000,
+    "from_merges": "merges_upto16000.pkl",
     "second_vocab_size": 1000,
     "study_sizes": [
       1000,
@@ -27,7 +27,7 @@
     "limit_mb": 0,
     "skip_encode": false,
     "skip_q2": false,
-    "out_dir": "c:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy"
+    "out_dir": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S"
   },
   "q3": {
     "metrics": [
@@ -70,5 +70,150 @@
     "figure": "compression_ratio.png",
     "csv": "logs\\vocab_study.csv",
     "merges_file": "merges_upto16000.pkl"
+  },
+  "q1": {
+    "vocab_size": 16000,
+    "corpus_bytes": 2227753162,
+    "workers": 8,
+    "pretokenize_seconds": 65.5,
+    "merge_seconds": 19.4,
+    "train_total_seconds": 84.9,
+    "timed_at": "the study's largest vocabulary size, not a chosen one",
+    "encode_seconds": 531.1
+  },
+  "reused_merges": "merges_upto16000.pkl",
+  "q4": {
+    "longest_token": "b' uncomfortable'",
+    "longest_token_length_bytes": 14,
+    "first_merges": [
+      "b' ' + b't'",
+      "b'h' + b'e'",
+      "b' ' + b'a'",
+      "b' ' + b's'",
+      "b' ' + b'w'"
+    ],
+    "last_merges": [
+      "b' u' + b'r'",
+      "b'in' + b'ation'",
+      "b' hang' + b'ing'",
+      "b'uc' + b'et'",
+      "b'ail' + b'able'"
+    ]
+  },
+  "tokenizers": {
+    "primary": {
+      "vocab_size": 4000,
+      "vocab": "vocab.pkl",
+      "merges": "merges.pkl"
+    },
+    "secondary": {
+      "vocab_size": 1000,
+      "vocab": "vocab1000_vocab.pkl",
+      "merges": "vocab1000_merges.pkl"
+    }
+  },
+  "encoded": {
+    "train_part1.npy": {
+      "input_file": "TinyStoriesV2-GPT4-train.txt",
+      "output_file": "train_part1.npy",
+      "vocab_size": 4000,
+      "n_tokens": 279926011,
+      "n_documents": 1359523,
+      "n_chars_excluding_delimiters": 1095749485,
+      "n_chars_including_delimiters": 1113423284,
+      "n_bytes_utf8_excluding_delimiters": 1096202822,
+      "eot_id": 0,
+      "eot_count": 1359523,
+      "bytes_per_token": 3.9160448794449474,
+      "chars_per_token": 3.9144253907865676,
+      "encode_seconds": 126.6
+    },
+    "train_part2.npy": {
+      "input_file": "TinyStoriesV2-GPT4-train-part2.txt",
+      "output_file": "train_part2.npy",
+      "vocab_size": 4000,
+      "n_tokens": 279914766,
+      "n_documents": 1358178,
+      "n_chars_excluding_delimiters": 1095765696,
+      "n_chars_including_delimiters": 1113422010,
+      "n_bytes_utf8_excluding_delimiters": 1096220253,
+      "eot_id": 0,
+      "eot_count": 1358178,
+      "bytes_per_token": 3.9162644710211536,
+      "chars_per_token": 3.9146405588335416,
+      "encode_seconds": 139.8
+    },
+    "valid.npy": {
+      "input_file": "TinyStoriesV2-GPT4-valid.txt",
+      "output_file": "valid.npy",
+      "vocab_size": 4000,
+      "n_tokens": 5652646,
+      "n_documents": 27631,
+      "n_chars_excluding_delimiters": 22134197,
+      "n_chars_including_delimiters": 22493400,
+      "n_bytes_utf8_excluding_delimiters": 22143411,
+      "eot_id": 0,
+      "eot_count": 27631,
+      "bytes_per_token": 3.9173532182981208,
+      "chars_per_token": 3.9157231852127303,
+      "encode_seconds": 2.6
+    },
+    "train_part1_vocab1000.npy": {
+      "input_file": "TinyStoriesV2-GPT4-train.txt",
+      "output_file": "train_part1_vocab1000.npy",
+      "vocab_size": 1000,
+      "n_tokens": 351531406,
+      "n_documents": 1359523,
+      "n_chars_excluding_delimiters": 1095749485,
+      "n_chars_including_delimiters": 1113423284,
+      "n_bytes_utf8_excluding_delimiters": 1096202822,
+      "eot_id": 0,
+      "eot_count": 1359523,
+      "bytes_per_token": 3.1183638311963513,
+      "chars_per_token": 3.1170742252258394,
+      "encode_seconds": 128.5
+    },
+    "train_part2_vocab1000.npy": {
+      "input_file": "TinyStoriesV2-GPT4-train-part2.txt",
+      "output_file": "train_part2_vocab1000.npy",
+      "vocab_size": 1000,
+      "n_tokens": 351559027,
+      "n_documents": 1358178,
+      "n_chars_excluding_delimiters": 1095765696,
+      "n_chars_including_delimiters": 1113422010,
+      "n_bytes_utf8_excluding_delimiters": 1096220253,
+      "eot_id": 0,
+      "eot_count": 1358178,
+      "bytes_per_token": 3.1181684121568582,
+      "chars_per_token": 3.116875437250542,
+      "encode_seconds": 128.2
+    },
+    "valid_vocab1000.npy": {
+      "input_file": "TinyStoriesV2-GPT4-valid.txt",
+      "output_file": "valid_vocab1000.npy",
+      "vocab_size": 1000,
+      "n_tokens": 7096738,
+      "n_documents": 27631,
+      "n_chars_excluding_delimiters": 22134197,
+      "n_chars_including_delimiters": 22493400,
+      "n_bytes_utf8_excluding_delimiters": 22143411,
+      "eot_id": 0,
+      "eot_count": 27631,
+      "bytes_per_token": 3.12022382677788,
+      "chars_per_token": 3.1189254837926947,
+      "encode_seconds": 2.7
+    }
+  },
+  "q2": {
+    "slice_bytes": 10003982,
+    "vocab_size": 1000,
+    "pretokenize_seconds": 1.05,
+    "merge_seconds_tutorial": 9.39,
+    "merge_seconds_optimised": 0.26,
+    "merge_speedup": 36.4,
+    "end_to_end_seconds_tutorial": 10.45,
+    "end_to_end_seconds_optimised": 1.31,
+    "end_to_end_speedup": 8.0,
+    "merges_identical": true
   }
 }

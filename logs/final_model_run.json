@@ -1,0 +1,43 @@
+{
+  "name": "final_model",
+  "phase": "final_model",
+  "note": "section 7.4: 20000 steps, cosine period matched",
+  "learning_rate": 0.003,
+  "model_config": {
+    "vocab_size": 4000,
+    "context_length": 256,
+    "n_layers": 4,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ff": 1344,
+    "rope_theta": 10000.0,
+    "use_qk_norm": true,
+    "use_rmsnorm": true,
+    "use_rope": true,
+    "ffn_type": "swiglu"
+  },
+  "run_config": {
+    "batch_size": 32,
+    "num_steps": 20000,
+    "warmup_steps": 200,
+    "weight_decay": 0.1,
+    "grad_clip": 1.0,
+    "eval_every": 50,
+    "save_every": 2000,
+    "seed": 42,
+    "learning_rate": 0.003
+  },
+  "n_parameters": 16552960,
+  "diverged": false,
+  "diverged_at": null,
+  "diverged_reason": null,
+  "completed_steps": 20000,
+  "final_val_loss": 1.4156842231750488,
+  "final_train_loss": 1.4203739166259766,
+  "wall_seconds": 2504.3851478099823,
+  "device": "cuda",
+  "amp_enabled": true,
+  "checkpoint": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\checkpoints\\final_model_final.pt",
+  "eval_log": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\logs\\final_model.csv",
+  "data_source": "1 train part(s) + valid_split.npy"
+}

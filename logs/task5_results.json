@@ -1,0 +1,184 @@
+{
+  "machine": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "torch": "2.13.0+cu130",
+    "device": "cuda"
+  },
+  "model_config": {
+    "vocab_size": 4000,
+    "context_length": 256,
+    "n_layers": 4,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ff": 1344,
+    "rope_theta": 10000.0,
+    "use_qk_norm": true,
+    "use_rmsnorm": true,
+    "use_rope": true,
+    "ffn_type": "swiglu"
+  },
+  "final_model_run": "final_model",
+  "trained": true,
+  "q19": {
+    "prompt": "Once upon a time,",
+    "max_new_tokens": 256,
+    "seed": 42,
+    "samples": [
+      {
+        "label": "greedy (temperature=0)",
+        "settings": {
+          "temperature": 0.0
+        },
+        "prompt": "Once upon a time,",
+        "text": "Once upon a time, there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball in the sky. She wanted to play with it.\nLily ran to her mom and said, \"Mom, can I play with the big, red ball?\" Her mom said, \"Yes, but be careful. The ball might fly away.\"\nLily played with the big, red ball. She kicked it high in the sky. The ball went up, up, up. But then, the ball went too high. It got stuck in a tree.\nLily was sad. She wanted her ball back. Her mom said, \"Don't worry, Lily. We can get it.\" They got a long stick and got the ball down. Lily was happy again. She played with the big, red ball all day long.\n<|endoftext|>",
+        "continuation": " there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball in the sky. She wanted to play with it.\nLily ran to her mom and said, \"Mom, can I play with the big, red ball?\" Her mom said, \"Yes, but be careful. The ball might fly away.\"\nLily played with the big, red ball. She kicked it high in the sky. The ball went up, up, up. But then, the ball went too high. It got stuck in a tree.\nLily was sad. She wanted her ball back. Her mom said, \"Don't worry, Lily. We can get it.\" They got a long stick and got the ball down. Lily was happy again. She played with the big, red ball all day long.\n<|endoftext|>",
+        "n_tokens": 182,
+        "seconds": 0.9998718999995617,
+        "distinct_token_ratio": 0.43956043956043955,
+        "most_repeated_trigram": "big red ball",
+        "most_repeated_trigram_count": 4,
+        "repeated_trigram_fraction": 0.02877697841726619
+      },
+      {
+        "label": "temperature=0.8, top-k=40",
+        "settings": {
+          "temperature": 0.8,
+          "top_k": 40
+        },
+        "prompt": "Once upon a time,",
+        "text": "Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the other trees.\nOne day, Tom saw something weird outside the tree. It was a big, shiny rock. Tom did not know what it was. He was very curious.\nTom climbed back down and found a small, shiny rock. He was so happy! Tom showed the rock to his friends and they all thought it was interesting. They all played with the rock and had a fun day.\n<|endoftext|>",
+        "continuation": " there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the other trees.\nOne day, Tom saw something weird outside the tree. It was a big, shiny rock. Tom did not know what it was. He was very curious.\nTom climbed back down and found a small, shiny rock. He was so happy! Tom showed the rock to his friends and they all thought it was interesting. They all played with the rock and had a fun day.\n<|endoftext|>",
+        "n_tokens": 115,
+        "seconds": 0.5962104999998701,
+        "distinct_token_ratio": 0.5739130434782609,
+        "most_repeated_trigram": "once upon a",
+        "most_repeated_trigram_count": 1,
+        "repeated_trigram_fraction": 0.010638297872340425
+      },
+      {
+        "label": "temperature=0.9, top-p=0.95",
+        "settings": {
+          "temperature": 0.9,
+          "top_p": 0.95
+        },
+        "prompt": "Once upon a time,",
+        "text": "Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.\nOne day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.\nTom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.\n<|endoftext|>",
+        "continuation": " there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.\nOne day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.\nTom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.\n<|endoftext|>",
+        "n_tokens": 193,
+        "seconds": 0.974859000001743,
+        "distinct_token_ratio": 0.46113989637305697,
+        "most_repeated_trigram": "the tree and",
+        "most_repeated_trigram_count": 4,
+        "repeated_trigram_fraction": 0.024539877300613498
+      }
+    ],
+    "recommended": "temperature=0.8, top-k=40",
+    "trained": true
+  },
+  "q20": {
+    "degenerate": {
+      "sample": {
+        "label": "temperature=0.15 (no truncation)",
+        "settings": {
+          "temperature": 0.15
+        },
+        "prompt": "Once upon a time,",
+        "text": "Once upon a time, there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball. She wanted to play with it.\nLily kicked the ball very hard. The ball went up, up, up into the sky. Lily was sad. She wanted her ball back. She thought of a plan.\nLily ran inside her house. She found a big box. She put the ball inside the box. She closed the box and went back to the park. Lily played with the ball all day. She was happy again.\n<|endoftext|>",
+        "continuation": " there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, red ball. She wanted to play with it.\nLily kicked the ball very hard. The ball went up, up, up into the sky. Lily was sad. She wanted her ball back. She thought of a plan.\nLily ran inside her house. She found a big box. She put the ball inside the box. She closed the box and went back to the park. Lily played with the ball all day. She was happy again.\n<|endoftext|>",
+        "n_tokens": 123,
+        "seconds": 0.5878737000020919,
+        "distinct_token_ratio": 0.4878048780487805,
+        "most_repeated_trigram": "once upon a",
+        "most_repeated_trigram_count": 1,
+        "repeated_trigram_fraction": 0.01020408163265306
+      },
+      "comparison": {
+        "label": "temperature=0.9, top-p=0.95",
+        "distinct_token_ratio": 0.46113989637305697
+      },
+      "evidence_lines": [
+        "there was a little girl named Lily. She loved to play outside in the sun. One day, she saw a big, re",
+        "Lily kicked the ball very hard. The ball went up, up, up into the sky. Lily was sad. She wanted her ",
+        "Lily ran inside her house. She found a big box. She put the ball inside the box. She closed the box "
+      ]
+    },
+    "failure_mode_probes": [
+      {
+        "prompt": "Once upon a time,",
+        "text": "Once upon a time, there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.\nOne day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.\nTom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.\n<|endoftext|>",
+        "continuation": " there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb higher than all the houses in the town. His mom would watch him and watch him from the ground.\nOne day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he climbed up the tree and went up. As he climbed, he saw a little bird outside. The bird looked sad. Tom wanted to help the bird, so he went inside.\nTom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could help the bird. He got some food for the bird and put it in a bag. The bird was very happy and said thank you to Tom. From that day on, Tom was not worried anymore. He learned that even when bad things happen, he can ask for help.\n<|endoftext|>",
+        "lines": [
+          "there was a little boy named Tom. Tom loved to climb. Every day, he would climb the tree and climb h",
+          "One day, Tom was watching the tree and saw that it was very tall. He wanted to climb it. So, he clim",
+          "Tom's mom saw the bird too. She was very worried. Tom climbed down the tree and found out he could h"
+        ],
+        "distinct_token_ratio": 0.46113989637305697,
+        "n_tokens": 193,
+        "most_repeated_trigram": "the tree and",
+        "most_repeated_trigram_count": 4,
+        "repeated_trigram_fraction": 0.024539877300613498
+      },
+      {
+        "prompt": "The little girl found a key that",
+        "text": "The little girl found a key that could unlock the door. She was so excited! She ran inside and grabbed the key. She turned it and the door opened!\nOnce inside was a room full of books! They were so fun and full of books! The little girl could read all the books and she was so excited. She opened the book and read and read as a reward. \nThe little girl couldn't contain herself as she read about the world and all the people in the world. It was so much fun. She loved the story and she couldn't wait to tell her friends about it.\n<|endoftext|>",
+        "continuation": " could unlock the door. She was so excited! She ran inside and grabbed the key. She turned it and the door opened!\nOnce inside was a room full of books! They were so fun and full of books! The little girl could read all the books and she was so excited. She opened the book and read and read as a reward. \nThe little girl couldn't contain herself as she read about the world and all the people in the world. It was so much fun. She loved the story and she couldn't wait to tell her friends about it.\n<|endoftext|>",
+        "lines": [
+          "could unlock the door. She was so excited! She ran inside and grabbed the key. She turned it and the",
+          "Once inside was a room full of books! They were so fun and full of books! The little girl could read",
+          "The little girl couldn't contain herself as she read about the world and all the people in the world"
+        ],
+        "distinct_token_ratio": 0.48031496062992124,
+        "n_tokens": 127,
+        "most_repeated_trigram": "the little girl",
+        "most_repeated_trigram_count": 3,
+        "repeated_trigram_fraction": 0.027777777777777776
+      },
+      {
+        "prompt": "Tom and Sara wanted to build",
+        "text": "Tom and Sara wanted to build a box of paper and glue. But they knew they should not play with things they should not. They had to ask Mom first.\nMom was angry. She had a surprise for them. She said they had to clean their room and leave the box to their room. Tom and Sara did not want to do it. They liked to play with their toys, but they knew they had to clean up.\nThey put on their pajamas and grabbed the box of paper. They threw it in the trash and looked for a way to make the box tidy again. They found some tape, some tape, and some soap. They started to make the box tidy again.\nBut soon, they started to argue. They both wanted to use the tape, and the box for a little while. They did not want to share or say sorry. They only wanted to use the tape. They did not listen to Mom. They kept knocking and tugging. They did not listen to Mom.\nMom was not happy. She saw Tom and Sara fight. She was not happy. She said, \"Tom and Sara, you are naughty. You are not playing nicely. You have to learn to clean up your mess. If",
+        "continuation": " a box of paper and glue. But they knew they should not play with things they should not. They had to ask Mom first.\nMom was angry. She had a surprise for them. She said they had to clean their room and leave the box to their room. Tom and Sara did not want to do it. They liked to play with their toys, but they knew they had to clean up.\nThey put on their pajamas and grabbed the box of paper. They threw it in the trash and looked for a way to make the box tidy again. They found some tape, some tape, and some soap. They started to make the box tidy again.\nBut soon, they started to argue. They both wanted to use the tape, and the box for a little while. They did not want to share or say sorry. They only wanted to use the tape. They did not listen to Mom. They kept knocking and tugging. They did not listen to Mom.\nMom was not happy. She saw Tom and Sara fight. She was not happy. She said, \"Tom and Sara, you are naughty. You are not playing nicely. You have to learn to clean up your mess. If",
+        "lines": [
+          "a box of paper and glue. But they knew they should not play with things they should not. They had to",
+          "Mom was angry. She had a surprise for them. She said they had to clean their room and leave the box ",
+          "They put on their pajamas and grabbed the box of paper. They threw it in the trash and looked for a "
+        ],
+        "distinct_token_ratio": 0.4046692607003891,
+        "n_tokens": 257,
+        "most_repeated_trigram": "tom and sara",
+        "most_repeated_trigram_count": 4,
+        "repeated_trigram_fraction": 0.018957345971563982
+      }
+    ],
+    "mean_distinct_ratio_across_prompts": 0.44870803923445574,
+    "setting_used_for_probes": "temperature=0.9, top-p=0.95",
+    "trained": true
+  },
+  "q18": {
+    "validation": {
+      "loss": 1.3977583535672142,
+      "perplexity": 4.046119823342703,
+      "n_tokens": 5243648,
+      "n_windows": 20483,
+      "context_length": 256,
+      "bpc": 0.5149956339439064,
+      "chars_used": 20532253.54462598,
+      "chars_per_token": 3.915642992173765,
+      "convention": "excluding <|endoftext|>",
+      "source": "valid_split.npy"
+    },
+    "test": {
+      "loss": 1.416601196556593,
+      "perplexity": 4.1230830497320605,
+      "n_tokens": 408832,
+      "n_windows": 1597,
+      "context_length": 256,
+      "bpc": 0.5217885268071101,
+      "chars_used": 1601299.2461289747,
+      "chars_per_token": 3.9167659237265546,
+      "convention": "excluding <|endoftext|>",
+      "source": "test_split.npy"
+    },
+    "test_minus_validation_loss": 0.018842842989378772,
+    "trained": true
+  }
+}

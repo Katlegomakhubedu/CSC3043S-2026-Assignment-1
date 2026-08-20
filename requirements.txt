@@ -1,7 +1,6 @@
-torch>=2.4            # 2.8.0 used for the reported runs
-numpy>=1.26           # 2.3.4
-regex>=2024.0         # 2025.11.3 - required for the GPT-2 pre-tokenizer's \p{L}
-matplotlib>=3.8       # 3.10.5 - figures
-pandas>=2.0           # 2.3.1 - reading run logs when plotting
-tqdm>=4.66            # 4.67.1
-pytest>=8.0           # 9.1.1 - test suite
+torch
+numpy
+matplotlib
+regex
+tqdm
+pytest

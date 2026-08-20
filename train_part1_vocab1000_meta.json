@@ -1,0 +1,15 @@
+{
+  "input_file": "TinyStoriesV2-GPT4-train.txt",
+  "output_file": "train_part1_vocab1000.npy",
+  "vocab_size": 1000,
+  "n_tokens": 351531406,
+  "n_documents": 1359523,
+  "n_chars_excluding_delimiters": 1095749485,
+  "n_chars_including_delimiters": 1113423284,
+  "n_bytes_utf8_excluding_delimiters": 1096202822,
+  "eot_id": 0,
+  "eot_count": 1359523,
+  "bytes_per_token": 3.1183638311963513,
+  "chars_per_token": 3.1170742252258394,
+  "encode_seconds": 128.5
+}

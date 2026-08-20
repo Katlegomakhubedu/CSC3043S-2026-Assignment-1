@@ -1,16 +1,18 @@
 {
   "machine": {
-    "platform": "Windows-11-10.0.26200-SP0",
-    "processor": "Intel64 Family 6 Model 186 Stepping 3, GenuineIntel",
-    "cpu_count": 12,
-    "python": "3.13.6",
-    "torch": "2.8.0+cpu"
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+    "cpu_count": 16,
+    "python": "3.11.9",
+    "torch": "2.13.0+cu130"
   },
   "config": {
     "questions": [
+      5,
+      6,
       7
     ],
-    "prompt": "Once upon a time",
+    "prompt": "The quick brown fox jumps over the lazy dog.",
     "q6_tokens": 100,
     "token_counts": [
       16,
@@ -21,9 +23,9 @@
     ],
     "repeats": 3,
     "device": null,
-    "out_dir": "C:\\Users\\katle\\OneDrive - University of Cape Town\\Final Year\\CS3043S - Copy"
+    "out_dir": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S"
   },
-  "device": "cpu",
+  "device": "cuda",
   "tokenizer_source": "task1 (vocab.pkl/merges.pkl)",
   "vocab_size": 4000,
   "model_config": {
@@ -37,6 +39,138 @@
     "use_qk_norm": true
   },
   "trained_weights": false,
+  "q7": {
+    "prompt": "The quick brown fox jumps over the lazy dog.",
+    "n_prompt_tokens": 11,
+    "context_length": 256,
+    "device": "cuda",
+    "repeats": 3,
+    "rows": [
+      {
+        "max_new_tokens": 16,
+        "cached": {
+          "tokens_generated": 16,
+          "seconds_mean": 0.09518556666686588,
+          "seconds_trials": [
+            0.10843390000081854,
+            0.09243369999603601,
+            0.08468910000374308
+          ],
+          "tokens_per_second": 168.09271153469535
+        },
+        "uncached": {
+          "tokens_generated": 16,
+          "seconds_mean": 0.08657463333171715,
+          "seconds_trials": [
+            0.08762510000087786,
+            0.08794619999389397,
+            0.08415260000037961
+          ],
+          "tokens_per_second": 184.81164036461823
+        },
+        "speedup": 0.909535304178147
+      },
+      {
+        "max_new_tokens": 32,
+        "cached": {
+          "tokens_generated": 32,
+          "seconds_mean": 0.163074266667536,
+          "seconds_trials": [
+            0.17123309999442426,
+            0.16075970000383677,
+            0.15723000000434695
+          ],
+          "tokens_per_second": 196.2296115379092
+        },
+        "uncached": {
+          "tokens_generated": 32,
+          "seconds_mean": 0.17792530000103093,
+          "seconds_trials": [
+            0.16664280000259168,
+            0.17795990000013262,
+            0.18917320000036852
+          ],
+          "tokens_per_second": 179.85075759217258
+        },
+        "speedup": 1.091069140686508
+      },
+      {
+        "max_new_tokens": 64,
+        "cached": {
+          "tokens_generated": 64,
+          "seconds_mean": 0.3513483333348025,
+          "seconds_trials": [
+            0.3716952000031597,
+            0.32947360000252957,
+            0.3528761999987182
+          ],
+          "tokens_per_second": 182.15541082135692
+        },
+        "uncached": {
+          "tokens_generated": 64,
+          "seconds_mean": 0.3428085666697977,
+          "seconds_trials": [
+            0.33777160000317963,
+            0.3573947000040789,
+            0.3332594000021345
+          ],
+          "tokens_per_second": 186.69311744956042
+        },
+        "speedup": 0.9756943014815237
+      },
+      {
+        "max_new_tokens": 128,
+        "cached": {
+          "tokens_generated": 128,
+          "seconds_mean": 0.6366836333351481,
+          "seconds_trials": [
+            0.6415070000002743,
+            0.654347300005611,
+            0.6141965999995591
+          ],
+          "tokens_per_second": 201.04176281318234
+        },
+        "uncached": {
+          "tokens_generated": 128,
+          "seconds_mean": 0.6056485333368377,
+          "seconds_trials": [
+            0.6249390000011772,
+            0.6063399000049685,
+            0.5856667000043672
+          ],
+          "tokens_per_second": 211.34369680510972
+        },
+        "speedup": 0.9512550686504396
+      },
+      {
+        "max_new_tokens": 256,
+        "cached": {
+          "tokens_generated": 246,
+          "seconds_mean": 1.3093194333365925,
+          "seconds_trials": [
+            1.3097646000023815,
+            1.3633337000064785,
+            1.2548600000009174
+          ],
+          "tokens_per_second": 187.88386831860282
+        },
+        "uncached": {
+          "tokens_generated": 256,
+          "seconds_mean": 1.231511533333105,
+          "seconds_trials": [
+            1.2760429000045406,
+            1.2775706999964314,
+            1.1409209999983432
+          ],
+          "tokens_per_second": 207.87462648208583
+        },
+        "speedup": 0.9038326201624912
+      }
+    ],
+    "speedup_at_max": 0.9038326201624912,
+    "max_new_tokens_at_max": 256,
+    "figure": "task2_q7_throughput.png"
+  },
   "q5": {
     "swiglu": {
       "d_ff": 1344,
@@ -58,146 +192,14 @@
     "vocab_size": 4000
   },
   "q6": {
-    "prompt": "Once upon a time",
+    "prompt": "The quick brown fox jumps over the lazy dog.",
     "n_tokens_requested": 100,
     "steps_compared": 100,
     "generations_identical": true,
     "argmax_identical_every_step": true,
     "max_abs_logit_difference": 1.4901161193847656e-06,
-    "mean_abs_logit_difference": 1.0488182306289674e-06,
+    "mean_abs_logit_difference": 1.079365611076355e-06,
     "tolerance": 0.0001,
     "passed": true
-  },
-  "q7": {
-    "prompt": "Once upon a time",
-    "n_prompt_tokens": 4,
-    "context_length": 256,
-    "device": "cpu",
-    "repeats": 3,
-    "rows": [
-      {
-        "max_new_tokens": 16,
-        "cached": {
-          "tokens_generated": 16,
-          "seconds_mean": 0.22377496670621136,
-          "seconds_trials": [
-            0.284399600001052,
-            0.196835600072518,
-            0.1900897000450641
-          ],
-          "tokens_per_second": 71.500401655767
-        },
-        "uncached": {
-          "tokens_generated": 16,
-          "seconds_mean": 0.2625599333550781,
-          "seconds_trials": [
-            0.3040581999812275,
-            0.25351700000464916,
-            0.23010460007935762
-          ],
-          "tokens_per_second": 60.938467631167796
-        },
-        "speedup": 1.1733212933499688
-      },
-      {
-        "max_new_tokens": 32,
-        "cached": {
-          "tokens_generated": 32,
-          "seconds_mean": 0.4114353999029845,
-          "seconds_trials": [
-            0.39974549994803965,
-            0.4783882999327034,
-            0.3561723998282105
-          ],
-          "tokens_per_second": 77.77648692248047
-        },
-        "uncached": {
-          "tokens_generated": 32,
-          "seconds_mean": 0.6015970666582385,
-          "seconds_trials": [
-            0.5658444999717176,
-            0.640960399992764,
-            0.5979863000102341
-          ],
-          "tokens_per_second": 53.19174871937813
-        },
-        "speedup": 1.4621908246108468
-      },
-      {
-        "max_new_tokens": 64,
-        "cached": {
-          "tokens_generated": 64,
-          "seconds_mean": 0.6994447000324726,
-          "seconds_trials": [
-            0.601087500108406,
-            0.695729399798438,
-            0.8015172001905739
-          ],
-          "tokens_per_second": 91.50115798579748
-        },
-        "uncached": {
-          "tokens_generated": 64,
-          "seconds_mean": 1.3124386333705236,
-          "seconds_trials": [
-            1.2196462999563664,
-            1.3059645001776516,
-            1.411705099977553
-          ],
-          "tokens_per_second": 48.76418475707254
-        },
-        "speedup": 1.8764008552921938
-      },
-      {
-        "max_new_tokens": 128,
-        "cached": {
-          "tokens_generated": 128,
-          "seconds_mean": 1.7276555666855227,
-          "seconds_trials": [
-            1.5931827002204955,
-            2.004800899885595,
-            1.5849830999504775
-          ],
-          "tokens_per_second": 74.08884182022797
-        },
-        "uncached": {
-          "tokens_generated": 128,
-          "seconds_mean": 5.181610466757168,
-          "seconds_trials": [
-            5.822273400146514,
-            5.1352143001277,
-            4.587343699997291
-          ],
-          "tokens_per_second": 24.702744604440877
-        },
-        "speedup": 2.9992149862938238
-      },
-      {
-        "max_new_tokens": 256,
-        "cached": {
-          "tokens_generated": 253,
-          "seconds_mean": 3.47226096666418,
-          "seconds_trials": [
-            4.172272600000724,
-            3.1354562998749316,
-            3.1090540001168847
-          ],
-          "tokens_per_second": 72.86318696346676
-        },
-        "uncached": {
-          "tokens_generated": 256,
-          "seconds_mean": 12.021399333296964,
-          "seconds_trials": [
-            12.619276199955493,
-            12.022330899955705,
-            11.422590899979696
-          ],
-          "tokens_per_second": 21.295357795072096
-        },
-        "speedup": 3.4215526061894974
-      }
-    ],
-    "speedup_at_max": 3.4215526061894974,
-    "max_new_tokens_at_max": 256,
-    "figure": "task2_q7_throughput.png"
   }
 }

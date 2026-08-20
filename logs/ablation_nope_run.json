@@ -1,0 +1,43 @@
+{
+  "name": "ablation_nope",
+  "phase": "ablations",
+  "note": "RoPE removed entirely",
+  "learning_rate": 0.003,
+  "model_config": {
+    "vocab_size": 4000,
+    "context_length": 256,
+    "n_layers": 4,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ff": 1344,
+    "rope_theta": 10000.0,
+    "use_qk_norm": true,
+    "use_rmsnorm": true,
+    "use_rope": false,
+    "ffn_type": "swiglu"
+  },
+  "run_config": {
+    "batch_size": 32,
+    "num_steps": 5000,
+    "warmup_steps": 200,
+    "weight_decay": 0.1,
+    "grad_clip": 1.0,
+    "eval_every": 50,
+    "save_every": 0,
+    "seed": 42,
+    "learning_rate": 0.003
+  },
+  "n_parameters": 16552960,
+  "diverged": false,
+  "diverged_at": null,
+  "diverged_reason": null,
+  "completed_steps": 5000,
+  "final_val_loss": 1.7393305063247682,
+  "final_train_loss": 1.7532529830932617,
+  "wall_seconds": 551.2074542045593,
+  "device": "cuda",
+  "amp_enabled": true,
+  "checkpoint": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\checkpoints\\ablation_nope_final.pt",
+  "eval_log": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\logs\\ablation_nope.csv",
+  "data_source": "1 train part(s) + valid_split.npy"
+}

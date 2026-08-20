@@ -10,7 +10,18 @@ cd "$(dirname "$0")/.."
 
 # -u keeps stdout unbuffered, so `bash scripts/run_experiments.sh | tee log`
 # shows progress as it happens instead of in one burst at the end.
-PY="${PYTHON:-python} -u"
+# Many distros (e.g. WSL/Ubuntu) only ship `python3`, not a bare `python`.
+if [ -n "${PYTHON:-}" ]; then
+    DEFAULT_PY="$PYTHON"
+elif command -v python3 >/dev/null 2>&1; then
+    DEFAULT_PY=python3
+elif command -v python >/dev/null 2>&1; then
+    DEFAULT_PY=python
+else
+    echo "Error: no python interpreter found on PATH (tried python3, python)." >&2
+    exit 1
+fi
+PY="$DEFAULT_PY -u"
 
 # The training stages need a GPU: the section 4.1 model runs at roughly
 # 10 s/step on CPU, and stages 5-7 are ~50,000 steps. Set SKIP_TRAINING=1 to
@@ -62,7 +73,11 @@ $PY scripts/combine_train_parts.py --suffix "_vocab${SECOND_VOCAB_SIZE}" --force
 # Stage 4 — Task 2 (Q5–Q7), off to the side
 # ---------------------------------------------------------
 echo "=== Stage 4: Running Task 2 (Model sweeps, no training) ==="
-$PY scripts/run_task2_questions.py
+# The default prompt ("Once upon a time") hits an early <|endoftext|> at some
+# token counts under the fixed seed=0 random init, which Q7 treats as a fatal
+# error (it would make the throughput denominator wrong). This prompt was
+# checked to run clean through all of --token_counts (16-256) with repeats=3.
+$PY scripts/run_task2_questions.py --prompt "The quick brown fox jumps over the lazy dog."
 
 if [ "$SKIP_TRAINING" = "1" ]; then
     echo "SKIP_TRAINING=1 - stopping after the data-preparation stages."

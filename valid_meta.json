@@ -1,15 +1,15 @@
 {
   "input_file": "TinyStoriesV2-GPT4-valid.txt",
-  "output_file": "valid_encoded.npy",
+  "output_file": "valid.npy",
   "vocab_size": 4000,
-  "n_tokens": 5648989,
+  "n_tokens": 5652646,
   "n_documents": 27631,
   "n_chars_excluding_delimiters": 22134197,
   "n_chars_including_delimiters": 22493400,
   "n_bytes_utf8_excluding_delimiters": 22143411,
   "eot_id": 0,
   "eot_count": 27631,
-  "bytes_per_token": 3.919889204953311,
-  "chars_per_token": 3.918258116629365,
-  "encode_seconds": 10.3
+  "bytes_per_token": 3.9173532182981208,
+  "chars_per_token": 3.9157231852127303,
+  "encode_seconds": 2.6
 }

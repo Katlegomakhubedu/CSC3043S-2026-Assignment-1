@@ -1,0 +1,43 @@
+{
+  "name": "ablation_no_rmsnorm_lowlr",
+  "phase": "ablations",
+  "note": "same ablation at a reduced learning rate (section 7.2)",
+  "learning_rate": 0.001,
+  "model_config": {
+    "vocab_size": 4000,
+    "context_length": 256,
+    "n_layers": 4,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ff": 1344,
+    "rope_theta": 10000.0,
+    "use_qk_norm": true,
+    "use_rmsnorm": false,
+    "use_rope": true,
+    "ffn_type": "swiglu"
+  },
+  "run_config": {
+    "batch_size": 32,
+    "num_steps": 5000,
+    "warmup_steps": 200,
+    "weight_decay": 0.1,
+    "grad_clip": 1.0,
+    "eval_every": 50,
+    "save_every": 0,
+    "seed": 42,
+    "learning_rate": 0.001
+  },
+  "n_parameters": 16548352,
+  "diverged": false,
+  "diverged_at": null,
+  "diverged_reason": null,
+  "completed_steps": 5000,
+  "final_val_loss": 1.638615894317627,
+  "final_train_loss": 1.6662063598632812,
+  "wall_seconds": 510.975061416626,
+  "device": "cuda",
+  "amp_enabled": true,
+  "checkpoint": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\checkpoints\\ablation_no_rmsnorm_lowlr_final.pt",
+  "eval_log": "C:\\Users\\lethabo nkhumane\\Documents\\KAT - CSC3043S\\Kat- A1- CS3043S\\logs\\ablation_no_rmsnorm_lowlr.csv",
+  "data_source": "1 train part(s) + valid_split.npy"
+}
