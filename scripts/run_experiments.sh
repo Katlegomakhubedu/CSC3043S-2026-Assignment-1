@@ -77,7 +77,7 @@ echo "=== Stage 5: Running Task 3 (Training arms) ==="
 echo "Running smoke test..."
 $PY scripts/run_task3_questions.py --smoke
 echo "Running full Task 3..."
-$PY scripts/run_task3_questions.py
+$PY scripts/run_task3_questions.py --train_data train.npy --valid_data valid_split.npy
 
 # ---------------------------------------------------------
 # Stage 6 — Task 4 (Q10–Q17) and the final model
