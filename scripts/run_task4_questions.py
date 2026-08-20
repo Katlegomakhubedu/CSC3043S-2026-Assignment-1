@@ -159,13 +159,19 @@ def load_corpus(args, vocab_size):
     paths = corpus_paths(args.data_dir, vocab_size, BASE_CONFIG["vocab_size"])
 
     if not os.path.exists(paths["valid"]):
+        if paths["suffix"]:
+            build = (f"  python scripts/make_splits.py "
+                     f"--vocab vocab{vocab_size}_vocab.pkl "
+                     f"--merges vocab{vocab_size}_merges.pkl "
+                     f"--suffix {paths['suffix']}")
+        else:
+            build = ("  python scripts/make_splits.py "
+                     "--vocab vocab.pkl --merges merges.pkl")
         raise SystemExit(
             f"{os.path.basename(paths['valid'])} is missing. Section 2's "
             f"validation/test split has to exist before any model selection "
             f"happens, or the reserved test documents get scored at every "
-            f"evaluation. Build it with:\n"
-            f"  python scripts/make_splits.py --vocab vocab.pkl --merges merges.pkl"
-            + (f" --suffix {paths['suffix']}" if paths["suffix"] else ""))
+            f"evaluation. Build it with:\n" + build)
 
     missing = [p for p in paths["train"] if not os.path.exists(p)]
     if missing:

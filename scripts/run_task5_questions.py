@@ -415,6 +415,12 @@ def run_q20(args, model, config, record, tokenizer, device, results):
 
 def write_samples(results, path, trained):
     """The generated text, in full, next to the settings that produced it."""
+
+    if not any(results.get(q) for q in ("q19", "q20")) and os.path.exists(path):
+        print(f"  (no Q19/Q20 generations in this run; {os.path.basename(path)} "
+              f"left as it was)")
+        return path
+
     blocks = [f"Prompt: {PROMPT!r}",
               f"Trained model: {trained}",
               f"Written: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
