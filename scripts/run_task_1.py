@@ -124,7 +124,8 @@ def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pr
     t0 = time.time()
     merges_max, token_counts = train_bpe_incremental(
         word_freq, vocab_max, max_study - base_size, track_token_counts=True)
-    print(f"      {len(merges_max):,} merges in {(time.time() - t0) / 60:.1f} min")
+    t_merge_max = time.time() - t0
+    print(f"      {len(merges_max):,} merges in {t_merge_max / 60:.1f} min")
 
     # Save the full merge list: any size <= max_study is a truncation of it, so
     # --from_merges can change the choice without pre-tokenizing again.
@@ -150,6 +151,15 @@ def run_study_and_choose(args, results, word_freq, base_size, corpus_bytes, t_pr
               f"{m['chars_per_token']:>12.3f} | {m['embed_lm_head_params']:>12,}")
 
     if args.vocab_size is None:
+        results["q1"] = {
+            "vocab_size": max_study,
+            "corpus_bytes": corpus_bytes,
+            "workers": args.workers,
+            "pretokenize_seconds": round(t_pretok, 1),
+            "merge_seconds": round(t_merge_max, 1),
+            "train_total_seconds": round(t_pretok + t_merge_max, 1),
+            "timed_at": "the study's largest vocabulary size, not a chosen one",
+        }
         results_path = save_results(results, args.out_dir)
         print("\n" + "=" * 66)
         print("STUDY COMPLETE - no --vocab_size given, stopping here.")
