@@ -356,14 +356,37 @@ def test_a_finished_run_is_reused_rather_than_retrained(tmp_path, monkeypatch):
     assert second["final_val_loss"] == first["final_val_loss"]
 
 
+def write_cached_run(args, name="already"):
+    """A run record as ensure_run writes one: a JSON file and the checkpoint
+    it points at, since the analysis loads the weights back."""
+    os.makedirs(args.log_dir, exist_ok=True)
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    checkpoint = os.path.join(args.checkpoint_dir, f"{name}_final.pt")
+    with open(checkpoint, "wb") as f:
+        f.write(b"not a real checkpoint, but it exists")
+    with open(os.path.join(args.log_dir, f"{name}_run.json"), "w") as f:
+        json.dump({"name": name, "final_val_loss": 1.0,
+                   "checkpoint": checkpoint}, f)
+    return checkpoint
+
+
 def test_force_retrains_a_cached_run(tmp_path, monkeypatch):
     import scripts.run_task4_questions as t4
 
     args = make_args(tmp_path)
-    os.makedirs(args.log_dir, exist_ok=True)
-    with open(os.path.join(args.log_dir, "already_run.json"), "w") as f:
-        json.dump({"name": "already", "final_val_loss": 1.0}, f)
+    write_cached_run(args)
 
     assert load_run(args, "already") is not None
     args.force = True
+    assert load_run(args, "already") is None
+
+
+def test_a_run_whose_checkpoint_is_gone_is_not_cached(tmp_path):
+    """Deleting checkpoints to reclaim disk must not leave records that skip
+    the training and then fail when the analysis loads the weights."""
+    args = make_args(tmp_path)
+    checkpoint = write_cached_run(args)
+
+    assert load_run(args, "already") is not None
+    os.remove(checkpoint)
     assert load_run(args, "already") is None

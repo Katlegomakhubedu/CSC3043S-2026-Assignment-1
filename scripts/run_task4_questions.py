@@ -224,12 +224,20 @@ def run_meta_path(args, name):
 
 
 def load_run(args, name):
-    """A finished run's record, or None."""
+    """A finished run's record, or None.
+    """
     path = run_meta_path(args, name)
     if args.force or not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        record = json.load(f)
+    checkpoint = record.get("checkpoint")
+    if not checkpoint or not os.path.exists(checkpoint):
+        print(f"  [stale] {name}: the run record is there but "
+              f"{os.path.basename(checkpoint) if checkpoint else 'its checkpoint'} "
+              f"is not - it will be retrained")
+        return None
+    return record
 
 
 def ensure_run(args, exp, corpus, device):
@@ -323,6 +331,13 @@ def baseline_experiment(best_lr):
     compared against this one run."""
     return Experiment(name="baseline", phase="baseline", lr=best_lr,
                       note="standard run, the comparison point for sections 7.2-7.4")
+
+
+def vocab_study_experiment(best_lr, vocab_size):
+    """§7.3's second-tokenizer arm: one more standard run, on the corpus encoded
+    with the comparison vocabulary."""
+    return Experiment(name=f"vocab_{vocab_size}", phase="vocab_study", lr=best_lr,
+                      note=f"second tokenizer, vocab {vocab_size} (section 7.3)")
 
 
 def ablation_experiments(best_lr, reduced_lr):
@@ -647,8 +662,7 @@ def run_q15(args, corpus, device, results):
         primary = vocab_size == BASE_CONFIG["vocab_size"]
         vocab_corpus = corpus if primary else load_corpus(args, vocab_size)
         exp = (baseline_experiment(best_lr) if primary else
-               Experiment(name=f"vocab_{vocab_size}", phase="vocab_study", lr=best_lr,
-                          note=f"second tokenizer, vocab {vocab_size} (section 7.3)"))
+               vocab_study_experiment(best_lr, vocab_size))
         record = ensure_run(args, exp, vocab_corpus, device)
 
         model = load_trained_model(record, device)
@@ -881,6 +895,10 @@ def print_plan(args, results):
 
     planned = sweep_experiments(args) + [baseline_experiment(best_lr)] + \
         ablation_experiments(best_lr, reduced_lr(args, best_lr))
+    # Q15 trains a further standard run on the second tokenizer's corpus, so
+    # leaving it out understates a full run by one whole arm.
+    if args.second_vocab_size != BASE_CONFIG["vocab_size"]:
+        planned.append(vocab_study_experiment(best_lr, args.second_vocab_size))
     total_steps = sum(e.run_kwargs()["num_steps"] for e in planned)
 
     print(f"Best learning rate: {source}")
@@ -890,7 +908,7 @@ def print_plan(args, results):
         lr = "TBD" if math.isnan(e.lr) else f"{e.lr:.0e}"
         print(f"  {e.name:<32} {e.phase:<12} {e.run_kwargs()['num_steps']:>7} "
               f"{lr:>9}  {cached}")
-    print(f"\n  {total_steps:,} steps total for Q10-Q14 and Q17 "
+    print(f"\n  {total_steps:,} steps total for Q10-Q15 and Q17 "
           f"(plus section 7.4's final model at "
           f"{args.final_steps or 4 * STANDARD_RUN['num_steps']:,}).")
     print("  At ~0.1 s/step on an A100 that is roughly "
